@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "ADL NEXUS",
+      "hasCanvas": false,
+      "bodyTextLen": 312,
+      "bodyTextHash": "65ff69fdac262b3a0b359e2845cc34aaead23acd4979974e54ea4f6035c11338",
+      "bodyTextPrefix": "LIBRARY KNOWLEDGE GRAPH PROVENANCE TAP HERE CLICK HERE CODER: ID",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/floor-v3.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "ADL NEXUS",
+      "hasCanvas": false,
+      "bodyTextLen": 248,
+      "bodyTextHash": "3fc9498c5375e545017e333b8ad2b0d7e4513f79687a53d45f0d5ff973c5e773",
+      "bodyTextPrefix": "TAP HERE CLICK HERE CODER: IDLE CPO: IDLE PM: IDLE AUDITOR: IDLE",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/floor-v3-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/floor-v3.json"
+}

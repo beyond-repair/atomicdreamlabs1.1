@@ -1,0 +1,38 @@
+{
+  "url": "http://127.0.0.1:8081/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "ADL NEXUS",
+      "hasCanvas": false,
+      "bodyTextLen": 473,
+      "bodyTextHash": "1146f33bbc5c12a10bc23d668ae68a1f2962412cae1bcd4828c62192253f49e8",
+      "bodyTextPrefix": "ADL NEXUS Crew is on the floor. You hold the key. 2F BUSINESS DE",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "ADL NEXUS",
+      "hasCanvas": false,
+      "bodyTextLen": 473,
+      "bodyTextHash": "1146f33bbc5c12a10bc23d668ae68a1f2962412cae1bcd4828c62192253f49e8",
+      "bodyTextPrefix": "ADL NEXUS Crew is on the floor. You hold the key. 2F BUSINESS DE",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-built.json",
+  "divergesFromBaseline": false,
+  "baselineReasons": []
+}

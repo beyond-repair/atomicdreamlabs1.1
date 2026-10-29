@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { beep, isMuted, setMuted } from "@/components/office/games/beep";
 import { useNexus } from "@/lib/nexus/store";
 import { heroSprite } from "@/lib/nexus/arcade";
 import { CREW_FILTER } from "@/lib/nexus/crew";
@@ -18,6 +19,11 @@ export function PaddleGame({ hero = "engineer", onHi }: { hero?: RoleId; onHi?: 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const addGold = useNexus((s) => s.addGold);
   const [hud, setHud] = useState({ score: 0, lives: 3, hi: 0, state: "ready" });
+  const [paused, setPaused] = useState(false);
+  const [quiet, setQuiet] = useState(isMuted());
+  const pausedRef = useRef(false);
+  const keysRef = useRef(new Set<string>());
+  const serveRef = useRef<() => void>(() => {});
   const goldRef = useRef(addGold);
   goldRef.current = addGold;
   const hiRef = useRef(onHi);
@@ -41,7 +47,7 @@ export function PaddleGame({ hero = "engineer", onHi }: { hero?: RoleId; onHi?: 
     let state: "ready" | "run" | "win" | "lose" = "ready";
     let trauma = 0;
     let flash = 0;
-    const keys = new Set<string>();
+    const keys = keysRef.current;
     let lastHud = "";
 
     function seed() {
@@ -95,11 +101,13 @@ export function PaddleGame({ hero = "engineer", onHi }: { hero?: RoleId; onHi?: 
       }
       setHud({ score, lives, hi, state });
     }
+    serveRef.current = serve;
 
     function step(dt: number) {
       if (keys.has("KeyA") || keys.has("ArrowLeft")) paddle.x = Math.max(paddle.w / 2, paddle.x - 0.9 * dt);
       if (keys.has("KeyD") || keys.has("ArrowRight")) paddle.x = Math.min(1 - paddle.w / 2, paddle.x + 0.9 * dt);
       if (state === "ready") ball.x = paddle.x;
+      if (pausedRef.current) return;
       trauma = Math.max(0, trauma - dt * 2.4);
       flash = Math.max(0, flash - dt * 4);
       for (const s of sparks) {
@@ -135,6 +143,7 @@ export function PaddleGame({ hero = "engineer", onHi }: { hero?: RoleId; onHi?: 
         ball.vx = Math.cos(ang) * spd;
         ball.vy = Math.sin(ang) * spd;
         ball.y = py - ball.r;
+        beep(520, 0.04);
       }
       for (const b of bricks) {
         if (!b.alive) continue;
@@ -240,30 +249,62 @@ export function PaddleGame({ hero = "engineer", onHi }: { hero?: RoleId; onHi?: 
     const onUp = (e: KeyboardEvent) => keys.delete(e.code);
     canvas.addEventListener("pointermove", onMove);
     canvas.addEventListener("pointerdown", onDown);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("keyup", onUp);
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", onUp, true);
     window.addEventListener("blur", () => keys.clear());
     return () => {
       stop();
       disconnect();
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerdown", onDown);
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onUp, true);
       if (window.__controlsTest) delete window.__controlsTest;
     };
   }, [hero]);
 
   return (
     <div>
-      <p className="font-pixel text-[8px] text-gold">
-        PADDLE · {hud.score} · L{hud.lives} · HI {hud.hi}
+      <p className="font-pixel text-[11px] text-gold">
+        PADDLE · {hud.score} · LIVES {hud.lives} · BEST {hud.hi}
+        {paused ? " · PAUSED" : ""}
       </p>
+      <div className="paddle-controls">
+        <button type="button" aria-label="Move left" onPointerDown={() => keysRef.current.add("ArrowLeft")} onPointerUp={() => keysRef.current.delete("ArrowLeft")} onPointerLeave={() => keysRef.current.delete("ArrowLeft")}>
+          LEFT
+        </button>
+        <button type="button" onClick={() => serveRef.current()}>
+          SERVE
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            pausedRef.current = !pausedRef.current;
+            setPaused(pausedRef.current);
+          }}
+        >
+          {paused ? "RESUME" : "PAUSE"}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const next = !quiet;
+            setQuiet(next);
+            setMuted(next);
+            if (!next) beep(520, 0.05);
+          }}
+        >
+          {quiet ? "SOUND" : "MUTE"}
+        </button>
+        <button type="button" aria-label="Move right" onPointerDown={() => keysRef.current.add("ArrowRight")} onPointerUp={() => keysRef.current.delete("ArrowRight")} onPointerLeave={() => keysRef.current.delete("ArrowRight")}>
+          RIGHT
+        </button>
+      </div>
       <canvas
         ref={canvasRef}
         className="game-canvas"
         style={{ touchAction: "none" }}
-        aria-label="Packet Paddle playfield"
+        aria-label="Packet Paddle. Arrows or A and D move. Space serves."
       />
     </div>
   );

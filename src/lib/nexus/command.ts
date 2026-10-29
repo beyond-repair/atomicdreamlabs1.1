@@ -133,17 +133,10 @@ export const WORKERS: Worker[] = [
   { id: "w-pm", name: "PM-1", role: "pm", title: "Product Manager", status: "idle", assignment: "Horizon plan owners", tokens: 3_300, load: 11 },
 ];
 
-export const FEED: FeedItem[] = [
-  { id: "f1", source: "github", title: "PR merged · lab preview shell", ts: Date.now() - 1000 * 60 * 18, nodeId: "repo-nexus" },
-  { id: "f2", source: "system", title: "Reality State constructed · operational", ts: Date.now() - 1000 * 60 * 42, nodeId: "dec-horizon" },
-  { id: "f3", source: "calendar", title: "Milestone · NEXUS 1.0 closed loop", ts: Date.now() - 1000 * 60 * 90, nodeId: "obj-launch" },
-  { id: "f4", source: "notion", title: "Doctrine page updated · fail closed", ts: Date.now() - 1000 * 60 * 140, nodeId: "doc-doctrine" },
-  { id: "f5", source: "slack", title: "Ops: visitor on the floor", ts: Date.now() - 1000 * 60 * 8, nodeId: "proj-alpha" },
-  { id: "f6", source: "mail", title: "Evidence pack queued for authorize", ts: Date.now() - 1000 * 60 * 6, nodeId: "dec-horizon" },
-];
+export const FEED: FeedItem[] = [];
 
 export const INTEGRATIONS: { id: string; label: string; state: "local" | "idle" | "live" }[] = [
-  { id: "github", label: "GitHub", state: "live" },
+  { id: "github", label: "GitHub", state: "idle" },
   { id: "web", label: "Browser", state: "live" },
   { id: "spot", label: "Spot mark", state: "live" },
   { id: "factory", label: "Factory", state: "local" },

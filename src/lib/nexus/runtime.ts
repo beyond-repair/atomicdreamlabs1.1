@@ -1,5 +1,5 @@
 import { DRAWDOWN_LIMIT, bollinger, hashFiles, macdCrosses, parseOrder, parseTicket, remember, rsi, supplierQuotes, synthBars } from "./adapters.ts";
-import { fetchSpot, hydrateBiz, offeringPrice, runLabTests, shopFiles, type BizState } from "./business.ts";
+import { fetchLiveSpot, fetchSpot, hydrateBiz, offeringPrice, runLabTests, shopFiles, type BizState } from "./business.ts";
 import { sha256Hex, shortHash } from "./hash.ts";
 import {
   COMPLIANCE_NOTIONAL,
@@ -10,6 +10,7 @@ import {
   matchPathway,
   parseRestock,
   parseTrade,
+  registeredPathway,
   type Pathway,
 } from "./pathways.ts";
 import { crewForPathway } from "./crew.ts";
@@ -79,6 +80,18 @@ export function inspectPathways() {
   return PATHWAYS.map((p) => `${p.id} · ${p.title} · owner ${p.owner} · ${p.claim} · try: ${p.hint}`).join("\n");
 }
 
+export function preflight(proposal: Proposal, raw: World): string | null {
+  if (!proposal.authorized) return "GATE refused — unauthorized";
+  const pathway = registeredPathway(proposal.pathway ?? "") ?? matchPathway(proposal.goal);
+  const world: World = {
+    gold: raw.gold,
+    biz: hydrateBiz(raw.biz),
+    files: raw.files ?? {},
+    logTail: raw.logTail ?? [],
+  };
+  return gate(pathway, proposal.goal, world);
+}
+
 export async function executeAuthorized(proposal: Proposal, raw: World): Promise<RuntimeResult> {
   const world: World = {
     gold: raw.gold,
@@ -86,7 +99,8 @@ export async function executeAuthorized(proposal: Proposal, raw: World): Promise
     files: raw.files ?? {},
     logTail: raw.logTail ?? [],
   };
-  const pathway = byId(proposal.pathway ?? matchPathway(proposal.goal).id);
+  const requested = proposal.pathway?.trim() ?? "";
+  const registered = requested ? registeredPathway(requested) : null;
   const steps: PipeStep[] = [
     { name: "REQUEST", ok: true, note: proposal.goal.slice(0, 80) },
     { name: "GOVERN", ok: proposal.authorized, note: proposal.authorized ? "operator authorized" : "missing authorize" },
@@ -94,8 +108,32 @@ export async function executeAuthorized(proposal: Proposal, raw: World): Promise
   ];
 
   if (!proposal.authorized) {
-    return seal(proposal, pathway, world, steps, false, "GATE refused — unauthorized", {});
+    const named = registered ?? byId("assign");
+    return seal(proposal, named, world, steps, false, "GATE refused — unauthorized", {});
   }
+
+  if (requested && !registered) {
+    steps[2] = { name: "GATE", ok: false, note: "unregistered pathway" };
+    return seal(
+      proposal,
+      {
+        id: requested,
+        title: "Unregistered",
+        kind: "audit",
+        owner: "qa",
+        claim: "Not in the pathway registry.",
+        hint: "",
+        chip: "NONE",
+      },
+      world,
+      steps,
+      false,
+      `unregistered pathway ${requested}`,
+      {},
+    );
+  }
+
+  const pathway = registered ?? matchPathway(proposal.goal);
 
   const gated = gate(pathway, proposal.goal, world);
   if (gated) {
@@ -103,12 +141,16 @@ export async function executeAuthorized(proposal: Proposal, raw: World): Promise
     return seal(proposal, pathway, world, steps, false, gated, {});
   }
 
-  const { effects, detail, overlay } = await invoke(pathway, proposal.goal, world);
+  const invoked = await invoke(pathway, proposal.goal, world);
+  if (invoked.ok === false) {
+    steps.push({ name: "PATHWAY", ok: false, note: pathway.id });
+    return seal(proposal, pathway, world, steps, false, invoked.detail, {});
+  }
   steps.push({ name: "PATHWAY", ok: true, note: pathway.id });
-  return seal(proposal, pathway, world, steps, true, detail, effects, overlay);
+  return seal(proposal, pathway, world, steps, true, invoked.detail, invoked.effects, invoked.overlay);
 }
 
-const RISK_LOCKED = new Set(["paper_trade", "mean_reversion", "restock", "dropship_order", "drain_holds"]);
+const RISK_LOCKED = new Set(["paper_trade", "live_trade", "mean_reversion", "restock", "dropship_order", "drain_holds"]);
 
 function gate(pathway: Pathway, goal: string, world: World): string | null {
   const dd = world.biz.drawdown ?? 0;
@@ -118,6 +160,10 @@ function gate(pathway: Pathway, goal: string, world: World): string | null {
   if (pathway.id === "paper_trade") {
     const { qty } = parseTrade(goal);
     if (qty > TRADE_QTY_CAP) return `position cap ${TRADE_QTY_CAP} (paper)`;
+  }
+  if (pathway.id === "live_trade") {
+    const { qty } = parseTrade(goal);
+    if (qty > 0.05) return "live size cap 0.05";
   }
   if (pathway.id === "restock") {
     const { qty } = parseRestock(goal);
@@ -146,11 +192,12 @@ async function invoke(
   pathway: Pathway,
   goal: string,
   world: World,
-): Promise<{ effects: RunEffects; detail: string; overlay: RunRecord["overlay"] }> {
+): Promise<{ effects: RunEffects; detail: string; overlay: RunRecord["overlay"]; ok?: boolean }> {
   switch (pathway.id) {
     case "paper_trade": {
       const { side, qty, symbol } = parseTrade(goal);
-      const price = await fetchSpot(symbol);
+      const mark = await fetchLiveSpot(symbol);
+      const price = mark.price;
       const fill = { id: uid(), symbol, side, qty, price, ts: Date.now() };
       const goldDelta = side === "sell" ? Math.round(price * qty * 0.002) : -Math.round(price * qty * 0.002);
       const gold = Math.max(0, world.gold + goldDelta);
@@ -159,7 +206,7 @@ async function invoke(
         pushMemory(
           {
             ...world.biz,
-            lastSpot: { symbol, price, ts: Date.now() },
+            lastSpot: { symbol, price, ts: Date.now(), live: mark.live },
             fills: [fill, ...world.biz.fills].slice(0, 24),
           },
           rec,
@@ -168,7 +215,33 @@ async function invoke(
       );
       return {
         effects: { gold, biz },
-        detail: `Paper ${side} ${qty} ${symbol} @ ${price.toFixed(2)}. Not a live broker.`,
+        detail: `${mark.live ? "Coinbase spot" : "Local mark. Coinbase was not reached"} · paper ${side} ${qty} ${symbol} @ ${price.toFixed(2)}. Not a broker fill.`,
+        overlay: "biz",
+      };
+    }
+    case "live_trade": {
+      const broker = goal.match(/broker ([A-Za-z0-9_-]+)/);
+      const marked = goal.match(/@ ([0-9.]+)/);
+      if (!broker) {
+        return {
+          effects: {},
+          ok: false,
+          detail: "Live order was not sent. Paste a Coinbase key in Accounts, then COMMIT. Nothing was filled.",
+          overlay: "biz",
+        };
+      }
+      const { side, qty, symbol } = parseTrade(goal);
+      const price = marked ? Number(marked[1]) : 0;
+      const fill = { id: broker[1], symbol, side, qty, price, ts: Date.now() };
+      return {
+        effects: {
+          biz: {
+            ...world.biz,
+            lastSpot: { symbol, price, ts: Date.now(), live: true },
+            fills: [fill, ...world.biz.fills].slice(0, 24),
+          },
+        },
+        detail: `LIVE ${side} ${qty} ${symbol} @ ${price.toFixed(2)}. Coinbase order ${broker[1]}. Real order. Not a paper fill.`,
         overlay: "biz",
       };
     }
@@ -482,7 +555,7 @@ async function invoke(
       const files = {
         ...patched,
         "SCAN.md": renderScan(findings),
-        "SNAP.md": `# NEXUS SNAP\nhash: ${hash}\nfiles: ${Object.keys(patched).join(", ")}\n`,
+        "SNAP.md": `# NEXUS SNAP\nstatus: executed-local\nhash: ${hash}\nfiles: ${Object.keys(patched).join(", ")}\nexternal: none\n`,
         "SUNDER.md": renderSunder(findings, changed),
       };
       const rec = await remember("sunder", { hash, findings });
@@ -689,11 +762,18 @@ async function invoke(
         overlay: "files",
       };
     }
+    case "assign":
+      return {
+        effects: {},
+        detail: `Held for ${pathway.owner.toUpperCase()}. Supervised board. Nothing else ran.`,
+        overlay: "plan",
+      };
     default:
       return {
         effects: {},
-        detail: `Assigned ${pathway.owner.toUpperCase()} on the board. Supervised — not autonomous.`,
-        overlay: "files",
+        detail: `unregistered pathway ${pathway.id}`,
+        overlay: "plan",
+        ok: false,
       };
   }
 }

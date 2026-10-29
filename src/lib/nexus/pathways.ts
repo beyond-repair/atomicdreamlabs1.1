@@ -34,6 +34,15 @@ export const PATHWAYS: Pathway[] = [
     chip: "PAPER",
   },
   {
+    id: "live_trade",
+    title: "Live trade",
+    kind: "trade",
+    owner: "cpo",
+    claim: "Coinbase market order. Only after you COMMIT. Never automatic. Capped.",
+    hint: "live buy 0.001 BTC",
+    chip: "LIVE",
+  },
+  {
     id: "mean_reversion",
     title: "Mean reversion",
     kind: "trade",
@@ -263,14 +272,20 @@ export function matchPathway(goal: string): Pathway {
     return byId("restock");
   }
   if (/\border\b/.test(t) && !/\bborder\b/.test(t)) return byId("dropship_order");
+  if (/\blive (buy|sell)\b/.test(t)) return byId("live_trade");
   if (/\b(buy|sell|long|short|paper trade|btc|eth)\b/.test(t) && /\b(trade|buy|sell|btc|eth|position|paper)\b/.test(t)) {
     return byId("paper_trade");
   }
   return byId("assign");
 }
 
+export function registeredPathway(id: string): Pathway | null {
+  return PATHWAYS.find((p) => p.id === id) ?? null;
+}
+
+/** Unmatched goals become supervised assign. A named id that is not registered does not. */
 export function byId(id: string): Pathway {
-  return PATHWAYS.find((p) => p.id === id) ?? PATHWAYS[PATHWAYS.length - 1];
+  return registeredPathway(id) ?? PATHWAYS[PATHWAYS.length - 1]!;
 }
 
 export function parseTrade(goal: string): { side: "buy" | "sell"; qty: number; symbol: string } {

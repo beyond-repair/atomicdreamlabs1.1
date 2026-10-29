@@ -48,6 +48,7 @@ const globalRef = globalThis as typeof globalThis & {
   __pgSqlPromise__?: Promise<Sql>;
   __pgliteInstance__?: Promise<import("@electric-sql/pglite").PGlite>;
   __pgliteMigrateChain__?: Promise<void>;
+  __pgliteDir__?: string;
 };
 
 /**
@@ -106,18 +107,20 @@ function createNeonSql(): Promise<Sql> {
 }
 
 async function createPgliteSql(): Promise<Sql> {
-  // Embedded Postgres, imported on demand so it never loads on the Neon path.
-  // One in-memory instance per process, shared across HMR module instances, so
-  // data survives source edits (it resets on dev-server restart).
+  // Embedded Postgres. Files live in .data/pglite on this machine. Neon is used
+  // only when DATABASE_URL is set. If this disk cannot be written, the book stays
+  // in memory for the process.
   globalRef.__pgliteInstance__ ??= (async () => {
     const { PGlite } = await import("@electric-sql/pglite");
-    const pg = new PGlite({
-      parsers: {
-        [OID_INT8]: Number,
-        [OID_DATE]: identity,
-        [OID_INTERVAL]: identity,
-      },
-    });
+    const { localDataDir } = await import("@/lib/nexus/localbox");
+    const dir = await localDataDir();
+    globalRef.__pgliteDir__ = dir ?? "memory";
+    const parsers = {
+      [OID_INT8]: Number,
+      [OID_DATE]: identity,
+      [OID_INTERVAL]: identity,
+    };
+    const pg = dir ? new PGlite(dir, { parsers }) : new PGlite({ parsers });
     await pg.waitReady;
     await pg.exec(
       "create table if not exists _migrations (name text primary key, applied_at timestamptz not null default now())",

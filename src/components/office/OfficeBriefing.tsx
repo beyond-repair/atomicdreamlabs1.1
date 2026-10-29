@@ -1,4 +1,5 @@
 import { useNexus } from "@/lib/nexus/store";
+import { JOBS, PRODUCT_RULE } from "@/lib/nexus/product";
 import { DeskSheet } from "./overlays/DeskSheet";
 
 export function OfficeBriefing() {
@@ -7,25 +8,20 @@ export function OfficeBriefing() {
   if (briefed) return null;
 
   return (
-    <DeskSheet title="How it works" kicker="ADL NEXUS" onClose={dismiss} className="brief-veil">
-      <p className="font-body text-xl text-cream">
-        ChatDev company. Three rooms. The counter is chat. You hold COMMIT.
-      </p>
+    <DeskSheet title="One desk" kicker="ADL NEXUS" onClose={dismiss} className="brief-veil">
+      <p className="font-body text-xl text-cream">Three jobs. The other rooms support them.</p>
       <ol className="brief-steps mt-4">
-        <li>
-          <span className="font-pixel text-[8px] text-gold">1</span>
-          <p className="font-body text-xl text-cream">LOBBY — talk at the counter. Crew walks the job, rides the lift.</p>
-        </li>
-        <li>
-          <span className="font-pixel text-[8px] text-gold">2</span>
-          <p className="font-body text-xl text-cream">PLAY — arcade, YouTube, Steam. DESK — dropship and paper trade.</p>
-        </li>
-        <li>
-          <span className="font-pixel text-[8px] text-gold">3</span>
-          <p className="font-body text-xl text-cream">THINK → AUTH → COMMIT. Crew stages. Nothing executes without you.</p>
-        </li>
+        {JOBS.map((job, i) => (
+          <li key={job.id}>
+            <span className="font-body text-xl text-danger">{i + 1}</span>
+            <p className="font-body text-xl text-cream">
+              <strong>{job.title}.</strong> {job.line}
+            </p>
+          </li>
+        ))}
       </ol>
-      <button type="button" id="btn-enter" onClick={dismiss} className="mt-5 min-h-12 w-full bg-cream px-4 font-pixel text-[10px] text-ink">
+      <p className="font-body text-lg text-cream mt-4">{PRODUCT_RULE}</p>
+      <button type="button" id="btn-enter" onClick={dismiss} className="mt-5 min-h-12 w-full bg-cream px-4 font-body text-2xl text-ink">
         ENTER
       </button>
     </DeskSheet>

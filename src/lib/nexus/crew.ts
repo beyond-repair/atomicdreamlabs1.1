@@ -358,7 +358,7 @@ export function beatLabel(beat: Beat) {
 }
 
 export function crewForPathway(pathway: string): RoleId[] {
-  if (["paper_trade", "mean_reversion", "market_scan", "backtest"].includes(pathway)) return ["cpo", "qa", "pm"];
+  if (["paper_trade", "live_trade", "mean_reversion", "market_scan", "backtest"].includes(pathway)) return ["cpo", "qa", "pm"];
   if (["restock", "dropship_order", "drain_holds", "supplier_quote"].includes(pathway)) return ["cpo", "pm"];
   if (["shop_publish", "lab_qa", "design_version", "lab_build", "arcade_ship"].includes(pathway))
     return ["engineer", "qa", "pm"];

@@ -4,10 +4,11 @@ import { matchDemo } from "./demos.ts";
 import { looksLikeCodex, looksLikeHorizon, looksLikeSunder } from "./knowledge.ts";
 import { looksLikeArcade } from "./arcade.ts";
 import { inspectCatalog, liveCount } from "./codex.ts";
+import { productCopy } from "./product.ts";
 
-import { hashFiles } from "./adapters.ts";
-import { applySunder, renderScan, renderSunder, scanLab } from "./sunder.ts";
-import { matchRoadmap, renderBoard } from "./horizon.ts";
+import { matchDesk } from "./desk.ts";
+import { scanLab } from "./sunder.ts";
+import { matchRoadmap } from "./horizon.ts";
 import type { RoleId } from "./types.ts";
 import type { PlanStep } from "./knowledge.ts";
 
@@ -31,6 +32,20 @@ export async function tryLocalTurn(
   files: Record<string, string>,
   biz: BizState,
 ): Promise<LocalTurn | null> {
+  const desk = await matchDesk(goal);
+  if (desk) {
+    return {
+      ok: true,
+      messages: [msg("operator", desk.body)],
+      files,
+      events: [{ name: "desk_tool", actor: "operator", detail: desk.title }],
+      speaker: "operator",
+      plan: [],
+      incomplete: false,
+      checks: [],
+    };
+  }
+
   const demo = matchDemo(goal);
   if (looksLikeArcade(goal)) {
     return {
@@ -50,28 +65,19 @@ export async function tryLocalTurn(
     };
   }
   if (demo) {
-    const next = { ...files, ...demo.files };
-    const tested = runLabTests(next, biz);
+    const tested = runLabTests({ ...files, ...demo.files }, biz);
     const checks = tested.checks.map((c) => `${c.ok ? "PASS" : "FAIL"} ${c.name}`);
     return {
       ok: true,
       messages: [
-        msg("pm", `Plan locked (${demo.plan.length} steps). Floor is executing — not waiting.`),
-        msg("engineer", `${demo.title} files are in the monitor.`),
+        msg("pm", `${demo.title} is a lab build. Chat does not write the bench.`),
         msg("qa", checks.join(" · ") || "No checks."),
-        msg("engineer", demo.summary),
+        msg("engineer", "THINK staged it. AUTH, then COMMIT, and the files land."),
       ],
-      files: next,
-      events: [
-        { name: "set_plan", actor: "pm", detail: demo.title },
-        { name: "write_file", actor: "engineer", detail: "index.html" },
-        { name: "write_file", actor: "engineer", detail: "styles.css" },
-        { name: "write_file", actor: "engineer", detail: "main.js" },
-        { name: "run_checks", actor: "qa", detail: checks.join("; ") },
-        { name: "complete_goal", actor: "engineer", detail: demo.id },
-      ],
+      files,
+      events: [{ name: "needs_commit", actor: "engineer", detail: "lab_build" }],
       speaker: "engineer",
-      plan: demo.plan,
+      plan: [],
       incomplete: false,
       checks,
     };
@@ -79,31 +85,15 @@ export async function tryLocalTurn(
 
   if (looksLikeSunder(goal)) {
     const findings = scanLab(files);
-    const patched = applySunder(files, findings);
-    const hash = await hashFiles(patched);
-    const changed =
-      patched["index.html"] !== files["index.html"] || patched["main.js"] !== files["main.js"];
-    const next = {
-      ...patched,
-      "SCAN.md": renderScan(findings),
-      "SNAP.md": `# NEXUS SNAP\nhash: ${hash}\n`,
-      "SUNDER.md": renderSunder(findings, changed),
-    };
-    const line = changed
-      ? `SUNDER patched the lab. ${findings.length} finding(s).`
-      : `SCAN clean. ${findings[0]?.note ?? "Nothing to cut."}`;
     return {
       ok: true,
       messages: [
-        msg("cpo", "SCAN the lab. SNAP a hash. SUNDER only what this floor owns."),
+        msg("cpo", "SCAN stays in chat. SUNDER writes the lab only after COMMIT."),
         msg("qa", findings.map((f) => `${f.kind}: ${f.note}`).join(" · ")),
-        msg("cpo", `${line} Sibling repos were not touched.`),
+        msg("cpo", "Sibling repos were not touched. This is a local grep, not an external engine."),
       ],
-      files: next,
-      events: [
-        { name: "sunder", actor: "cpo", detail: hash.slice(0, 12) },
-        { name: "write_file", actor: "cpo", detail: "SUNDER.md" },
-      ],
+      files,
+      events: [{ name: "needs_commit", actor: "cpo", detail: "sunder" }],
       speaker: "cpo",
       plan: [],
       incomplete: false,
@@ -118,12 +108,12 @@ export async function tryLocalTurn(
       messages: [
         msg(
           "operator",
-          `This is your sovereign office. ${n} things actually run on this floor. T4–T5 — voice, APK, 24h unsupervised AGI — are capped.`,
+          "Work. Sell. Build. The other rooms support those three.",
         ),
         msg("qa", inspectCatalog()),
         msg(
           "ceo",
-          "Tap furniture. Talk to the desk. GOVERN is THINK → AUTH → COMMIT. I advise. You hold the key. Paper / local only.",
+          productCopy(),
         ),
       ],
       files,
@@ -142,14 +132,10 @@ export async function tryLocalTurn(
       ok: true,
       messages: [
         msg("pm", `${map.title}: ${map.steps.length} steps. Owners and tests on the board.`),
-        msg("cpo", "Smallest ship. Cut anything this floor cannot run."),
-        msg("pm", "AUTH is still yours. This is a plan, not unsupervised work."),
+        msg("cpo", "This is a plan. COMMIT writes BOARD.md. Chat does not."),
       ],
-      files: { ...files, "BOARD.md": renderBoard(map) },
-      events: [
-        { name: "set_plan", actor: "pm", detail: map.title },
-        { name: "write_file", actor: "pm", detail: "BOARD.md" },
-      ],
+      files,
+      events: [{ name: "needs_commit", actor: "pm", detail: "horizon" }],
       speaker: "pm",
       plan: map.steps,
       incomplete: false,

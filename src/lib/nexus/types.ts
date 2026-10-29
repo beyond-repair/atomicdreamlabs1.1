@@ -59,6 +59,9 @@ export type Proposal = {
   workforceHint: RoleId;
   pathway?: string;
   pathwayTitle?: string;
+  /** Binds this approval to the goal, pathway, and owner. Not a signature. */
+  seal?: string;
+  expiresAt?: number;
   assignment?: { ok: boolean; role: RoleId; taskId: string };
 };
 

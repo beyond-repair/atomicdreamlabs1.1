@@ -43,7 +43,7 @@ export function PlanDesk({ onClose }: { onClose: () => void }) {
   return (
     <DeskSheet title="Horizon board" kicker="MISSION CORE" onClose={onClose}>
       <p className="font-body text-xl text-muted">
-        Tap a live item to open it. GOVERN still holds COMMIT. {liveCount()} live on this floor. T4–T5 are capped.
+        Work, sell, or build. GOVERN still holds COMMIT. {liveCount()} live on this floor.
       </p>
 
       <div className="kanban mt-3">

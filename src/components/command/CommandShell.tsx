@@ -268,7 +268,7 @@ function ActivityFeed({ highlight }: { highlight: string | null }) {
   return (
     <section className="border-t border-cmd-line">
       <header className="flex items-center justify-between px-3 py-1.5">
-        <h2 className="text-[11px] font-medium tracking-wide text-cmd-mute">ACTIVITY FEED</h2>
+        <h2 className="text-[11px] font-medium tracking-wide text-cmd-mute">OFFICE LOG</h2>
         <ul className="hidden gap-2 text-[10px] uppercase text-cmd-mute lg:flex">
           {INTEGRATIONS.map((i) => (
             <li key={i.id} className="flex items-center gap-1" title={`${i.label} ${i.state}`}>
@@ -284,6 +284,9 @@ function ActivityFeed({ highlight }: { highlight: string | null }) {
         </ul>
       </header>
       <ul className="max-h-28 overflow-y-auto px-3 pb-2">
+        {items.length ? null : (
+          <li className="py-1 text-[12px] text-cmd-mute">No GitHub, Slack, Notion, or mail account. This list is the office log.</li>
+        )}
         {items.map((f) => (
           <li key={f.id}>
             <button

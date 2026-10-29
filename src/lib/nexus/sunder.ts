@@ -47,6 +47,18 @@ export function applySunder(files: Record<string, string>, findings: Finding[]):
   js = js.replace(/function\s+legacyFn\s*\([^)]*\)\s*\{[\s\S]*?\}/g, "");
   js = js.replace(/throw new Error\("fail"\);?/g, "");
 
+  for (const finding of findings) {
+    const name = finding.kind === "unused" ? finding.note.match(/Unused function (\w+)\(\)/)?.[1] : "";
+    if (!name) continue;
+    const re = new RegExp(`function\\s+${name}\\s*\\([^)]*\\)\\s*\\{[\\s\\S]*?\\}`, "g");
+    const stripped = js.replace(re, "");
+    if (stripped === js) {
+      finding.note = `${finding.note} Reported. Not cut. The body did not match a simple function.`;
+    } else {
+      js = stripped;
+    }
+  }
+
   if (findings.some((f) => f.kind === "missing" && /idle stub/.test(f.note))) {
     html = html.replace(
       /<p>Idle\.[^<]*<\/p>/,
@@ -74,7 +86,7 @@ export function renderScan(findings: Finding[]) {
     "# NEXUS SCAN",
     ...findings.map((f) => `- ${f.kind}: ${f.note}`),
     "",
-    "Claim: local lab grep. Not a GitHub org rewrite.",
+    "Claim: local lab grep. Not a GitHub org rewrite. No external Sunder process was started.",
   ].join("\n");
 }
 
@@ -84,6 +96,7 @@ export function renderSunder(findings: Finding[], changed: boolean) {
     changed ? "Wrote a local patch into the lab." : "Nothing to cut.",
     ...findings.map((f) => `- ${f.kind}: ${f.note}`),
     "",
+    "Status: executed locally inside the lab files. Not detected-only. Not an external adapter.",
     "Claim: lab rewrite only. Sibling repos are not touched.",
   ].join("\n");
 }

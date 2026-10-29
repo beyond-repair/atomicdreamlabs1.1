@@ -65,7 +65,7 @@ export const CODEX: CodexItem[] = [
   { id: "preview", tier: 2, title: "Live preview", status: "live", object: "Monitor", claim: "RUN pane renders the lab.", overlay: "ide" },
   { id: "tests", tier: 2, title: "Lab tests", status: "live", object: "QA", claim: "Deterministic file checks.", overlay: "ide" },
   { id: "handoff", tier: 2, title: "Agent handoff", status: "live", object: "Crew", claim: "Named crew walks ChatDev beats." },
-  { id: "persist", tier: 2, title: "Save / load", status: "live", object: "Desk", claim: "localStorage. This device only." },
+  { id: "persist", tier: 2, title: "Save / load", status: "live", object: "Desk", claim: "Saved on this browser. A carry file moves the desk and the lab. Tokens stay here." },
   { id: "plant", tier: 2, title: "Plant board", status: "live", object: "Hologram", claim: "Rules, watches, holds, inbound.", overlay: "sim" },
   { id: "shop", tier: 2, title: "Publish shop", status: "local", object: "Phone", claim: "Your rails. We don't take money.", overlay: "biz", feat: "shop" },
   { id: "youtube", tier: 3, title: "Local video demo", status: "live", object: "Engineer", claim: "Floorcast in the lab. Not YouTube.", send: "Build a video grid demo in the lab IDE with search, a player, a sidebar, and comments. Local sample data. Finish the tests.", feat: "build" },
@@ -102,7 +102,7 @@ export const CODEX: CodexItem[] = [
   { id: "godot", tier: 4, title: "Godot 4 DLRSE", status: "capped", object: "CORE", claim: "Graph kernel is 2D paper. No GDExtension runtime here." },
   { id: "dao", tier: 4, title: "On-chain DAO", status: "capped", object: "CORE", claim: "Governor is you. Merkle is local. No live chain." },
   { id: "refactor", tier: 3, title: "SCAN SNAP SUNDER", status: "local", object: "CPO", claim: "Lab grep + rewrite. No silent repo rewrite.", send: "sunder the lab", feat: "sunder" },
-  { id: "fullstack", tier: 4, title: "Full-stack + auth", status: "capped", object: "CTO", claim: "Lab demo only. No accounts, no live DB." },
+  { id: "fullstack", tier: 4, title: "Full-stack + auth", status: "capped", object: "CTO", claim: "Lab can edit, test, and run. Account reads need a token you paste. No sign-in that follows you." },
   { id: "voice", tier: 4, title: "Voice office", status: "capped", object: "Reception", claim: "Type. No mic runtime here." },
   { id: "hologram3d", tier: 4, title: "3D SIM cube", status: "capped", object: "Hologram", claim: "Plant board is 2D. No WebGL twin." },
   { id: "apk", tier: 4, title: "Mobile APK", status: "capped", object: "Monitor", claim: "This floor is a web office." },
@@ -117,14 +117,19 @@ export function inspectCodex() {
 
 export function inspectCatalog() {
   const halls = [
-    "FLOOR · office hub · furniture, crew, reception",
-    "PLAY · arcade · cabinets, HOLD the gate, wire snake, rock drift",
-    "SHOW · theater · tapes, YouTube portal, chess, jukebox, Steam, crew bout",
-    "DESK · exchange · paper trade, restock, AUTO plant",
-    "STACK · library · books, net search, SESA spec",
-    "LAB · compute · edit, TEST, RUN",
-    "PROOF · security · hash, halt, GOVERN inspector, SESA ledger",
-    "CORE · SESA · encode, bind, SMT, ring, merkle, dual-reality, triage",
+    "WORK · counter · write, check, draw, clip",
+    "SELL · plant and /shop · Cash App. Mark paid only after the money is there",
+    "BUILD · lab · write and test. Host only when you say so",
+    "DESK · trade · paper until COMMIT",
+    "SUPPORT · arcade and lounge · play and watch",
+    "PROOF · the record",
+    "CORE · SESA · a proof when you ask",
+  ];
+  const desk = [
+    "Exact: base64, hash, JSON, JWT, html escape, count, calc, sort, unique, reverse, date. Signature on a JWT is not checked.",
+    "Copy keeps the answer. Use puts it back in the box.",
+    "Write, Explain, Translate, Code, Draw, and Clip call the model. Draw makes a picture. Clip makes a short video and the link expires. If the model does not answer, Write cleans the text, Explain gives the shape, Code opens a lab page, and Sum returns an extract. Translate will not invent the wording.",
+    "A carry file moves the counter and the lab to another browser. Tokens are not in the file.",
   ];
   const govern = [
     "THINK → AUTH → COMMIT. CLEAR aborts.",
@@ -143,6 +148,9 @@ export function inspectCatalog() {
     "",
     "GOVERN",
     ...govern.map((g) => `· ${g}`),
+    "",
+    "DESK",
+    ...desk.map((d) => `· ${d}`),
     "",
     "LIVE",
     ...live.map((c) => `· T${c.tier} ${c.title} — ${c.claim}`),

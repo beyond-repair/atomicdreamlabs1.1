@@ -111,45 +111,70 @@ export function think(
   return { reality, proposal, provenance };
 }
 
+const AUTH_MS = 12 * 60 * 60 * 1000;
+
+/** Bind an approval to the exact proposal. Changing the goal or pathway breaks it. */
+export function proposalSeal(p: Pick<Proposal, "id" | "goal" | "pathway" | "workforceHint" | "actor">) {
+  const body = [p.id, p.goal, p.pathway ?? "", p.workforceHint, p.actor ?? "operator"].join("|");
+  let h = 2166136261;
+  for (let i = 0; i < body.length; i += 1) {
+    h ^= body.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
 export function authorize(
   proposal: Proposal,
   actor = "operator",
+  now = Date.now(),
 ): { proposal: Proposal; provenance: ProvenanceEntry } | { error: string } {
-  if (proposal.status === "committed") return { error: "already committed" };
+  if (proposal.status === "committed" || proposal.executed) return { error: "already committed" };
   const next: Proposal = {
     ...proposal,
     authorized: true,
     status: "authorized",
-    actor,
+    actor: actor.trim() || "operator",
+    expiresAt: now + AUTH_MS,
   };
+  next.seal = proposalSeal(next);
   return {
     proposal: next,
     provenance: {
       id: uid(12),
       kind: "authorize",
-      ts: Date.now(),
+      ts: now,
       proposalId: proposal.id,
-      payload: { actor },
+      payload: { actor: next.actor, seal: next.seal, expiresAt: next.expiresAt },
     },
   };
 }
 
 export function commit(
   proposal: Proposal,
+  now = Date.now(),
 ):
   | { proposal: Proposal; task: WorkforceTask; provenance: ProvenanceEntry }
   | { error: string; provenance: ProvenanceEntry } {
-  if (!proposal.authorized) {
-    return {
-      error: "unauthorized — AI advises, it cannot execute",
-      provenance: {
-        id: uid(12),
-        kind: "refuse",
-        ts: Date.now(),
-        proposalId: proposal.id,
-        payload: { reason: "missing authorize" },
-      },
-    };
+  const refuse = (reason: string) => ({
+    error: reason,
+    provenance: {
+      id: uid(12),
+      kind: "refuse" as const,
+      ts: now,
+      proposalId: proposal.id,
+      payload: { reason },
+    },
+  });
+  if (proposal.executed || proposal.status === "committed") return refuse("already committed");
+  if (!proposal.authorized || proposal.status !== "authorized") {
+    return refuse("unauthorized — AI advises, it cannot execute");
+  }
+  if (!proposal.seal || proposal.seal !== proposalSeal(proposal)) {
+    return refuse("Authorize again. The proposal changed after it was approved.");
+  }
+  if (proposal.expiresAt == null || now > proposal.expiresAt) {
+    return refuse("Authorization expired. THINK and AUTH again.");
   }
   const task: WorkforceTask = {
     id: uid(10),
@@ -170,7 +195,7 @@ export function commit(
     provenance: {
       id: uid(12),
       kind: "commit",
-      ts: Date.now(),
+      ts: now,
       proposalId: proposal.id,
       payload: { taskId: task.id, role: task.role, pathway: proposal.pathway ?? "assign" },
     },

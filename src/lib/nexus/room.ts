@@ -98,7 +98,7 @@ export const LIBRARY: Book[] = [
     spine: "bg-danger",
     pages: [
       "VERIFIED on this floor: command desk, crew roles, THINK → AUTH → COMMIT, lab files, TEST, paper trade, plant watches, hashed audit, arcade forge, local tapes.",
-      "COMING — not pretended: live sandbox deploy, production rollback, multi-model router, secret manager, plugin marketplace, unsupervised company loop.",
+      "HOST sends the current lab page to Vercel when you paste a token. There is no rollback, no secret vault, and no unsupervised loop.",
       "MODEL ≠ AUTHORITY. Verification is a check, not a claim. You hold the key.",
     ],
   },

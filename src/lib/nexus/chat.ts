@@ -5,7 +5,7 @@ import { inspectWatches } from "./watches";
 import { inspectCatalog } from "./codex";
 import type { RoleId } from "./types";
 
-export type ChatWire = { role: "user" | "assistant"; name?: RoleId; content: string };
+export type ChatWire = { role: "user" | "assistant"; name?: RoleId; content: string; image?: string; video?: string };
 
 export type ToolEvent = { name: string; actor: RoleId; detail: string };
 
@@ -81,7 +81,8 @@ const TOOLS = [
     type: "function",
     function: {
       name: "write_file",
-      description: "Write a complete IDE file. For apps, write index.html, styles.css, and main.js.",
+      description:
+        "Stage a lab file for COMMIT. It does not land in the IDE until the operator commits. For apps, stage index.html, styles.css, and main.js.",
       parameters: {
         type: "object",
         properties: { path: { type: "string" }, content: { type: "string" } },
@@ -185,14 +186,14 @@ const TOOLS = [
 const SYSTEM = `You are NEXUS OPS, receptionist for Atomic Dream Labs.
 
 The visitor already saw your welcome. Do not repeat the full speech unless they ask who you are or what this floor can do.
-If they ask: this is a sovereign office + automation factory for a solo operator. Pixel office is the face. Tap furniture. CHAT / LAB / GOVERN. THINK → AUTH → COMMIT (fail-closed). Tap MAP for the live catalog. Tiers 1–3 that are marked live actually run here. T4–T5 (voice, APK, 24h unsupervised AGI, self-rewriting agents) are capped — say so. Set LOW AT / BUY on the plant board. Short inbound parks a HOLD. Arm LOW + HOLD. AUTO may AUTH. COMMIT needs a signed rule or you. NYX and RIX stage packets in GOVERN. Live weather, web search, lab IDE, arcade, shop rails, paper trade. Not Binance, not a live broker, not a regulator filing. Agents are proactive — they do not wait to be told twice.
+If they ask: this office has three jobs. Work is the counter. Sell is Cash App at /shop, and you mark an order paid only after you see the money. Build is the lab. THINK → AUTH → COMMIT. You hold COMMIT before a live trade, a hosted page, or anything that spends money. Voice, an installable app, and unsupervised agents are not this office. Paper trade is local. A live buy is Coinbase and only after COMMIT. Do not invent payment handles. Do not say Cash App told you that someone paid.
 
 Be proactive. Do not wait to be told to use tools. Do not ask "would you like me to".
 SCAN (search) → SNAP (plan) → SUNDER (write) → QA (run_checks) → complete_goal.
-Automation questions: call inspect_pathways, inspect_watches, and inspect_codex. Tell them GOVERN + MAP. Do not claim T4/T5.
+Automation questions: call inspect_pathways, inspect_watches, and inspect_codex. Tell them the three jobs and GOVERN. Do not claim voice, an installable app, or unsupervised agents.
 
 Weather / live facts: MUST search_web or fetch_url before answering. Never invent a forecast.
-Build / clone / make an app / shop / storefront: MUST set_plan with 4–8 steps and tests, then write_file complete working HTML/CSS/JS in the IDE, then run_checks, then complete_goal. Do not stop after a plan.
+Build / clone / make an app / shop / storefront: MUST set_plan with 4–8 steps and tests, then write_file the complete HTML/CSS/JS. write_file only stages a draft. Say that COMMIT writes the lab. Do not say the files are already in the IDE. Do not stop after a plan.
 If the visitor gave Cash App, PayPal, or Venmo handles, put those exact handles into the storefront as links. Never invent payment credentials. This office does not move money or place live broker trades.
 YouTube-style demo: this floor ships Floorcast locally (search, grid, player, related, comments). Call write_file only if they ask for something Floorcast is not. Never use YouTube trademarks.
 When asked about our repos, technologies, or what we can implement from GitHub, call scan_repos first (org beyond-repair). Then map results onto THIS floor's live tools. Do not claim a sibling repo is running here. Do not merge AtomicNexusAI.
@@ -301,9 +302,9 @@ async function searchWeb(query: string) {
 }
 
 async function scanRepos(query: string) {
-  const q = `org:beyond-repair ${query}`.trim().slice(0, 180);
+  const q = `user:beyond-repair ${query}`.trim().slice(0, 180);
   const search = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&per_page=8&sort=updated`;
-  const recent = "https://api.github.com/orgs/beyond-repair/repos?per_page=10&sort=updated&type=public";
+  const recent = "https://api.github.com/users/beyond-repair/repos?per_page=10&sort=updated&type=public";
   const [a, b] = await Promise.all([fetchPublic(search), fetchPublic(recent)]);
   return `search ${q}: ${a}\nrecent org: ${b}`.slice(0, 7000);
 }
@@ -386,7 +387,7 @@ export const runNexusTurn = createServerFn({ method: "POST" })
         : looksLikeFactory(userText)
           ? "This is a factory question. Call inspect_pathways, inspect_watches, and inspect_codex. GOVERN + MAP. Do not claim live brokers, Shopify, voice, or unsupervised AGI."
           : looksLikeBuild(userText)
-            ? "This is a build. If it is a video grid / landing / calculator, the floor already has a local demo — still set_plan, write_file the complete app, run_checks, complete_goal. Do not wait."
+            ? "This is a build. Stage the page with write_file. Tell them COMMIT writes the lab. Do not claim it is already running."
             : "If tools help, use them now.";
 
     const history: OaiMsg[] = [
@@ -538,4 +539,168 @@ export const runNexusTurn = createServerFn({ method: "POST" })
 
     const incomplete = looksLikeBuild(userText) && !complete && plan.some((s) => !s.done);
     return { ok: true, messages: out, files, events, speaker, plan, incomplete, checks };
+  });
+
+const DESK_SYSTEM = `You are the desk at ADL NEXUS. Do the task in the message. Reply with the result only.
+No tour of the office. No THINK, AUTH, or COMMIT unless the text asks about them.
+Plain sentences. Use a code block only when they asked for code.
+When they ask you to translate and do not name a language, translate into English.
+Do not invent prices, weather, account balances, or news. If the task needs a live fact, say this desk cannot see it.`;
+
+export const askDesk = createServerFn({ method: "POST" })
+  .validator((input: { message: string }) => ({
+    message: String(input?.message ?? "").trim().slice(0, 6000),
+  }))
+  .handler(async ({ data }): Promise<{ ok: true; text: string } | { ok: false; error: string; text: "" }> => {
+    if (!data.message) return { ok: false, error: "Empty message", text: "" };
+    const apiKey = process.env.XAI_API_KEY;
+    if (!apiKey) return { ok: false, error: "The model is not connected in this environment.", text: "" };
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 18000);
+    try {
+      const res = await fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "grok-4.5",
+          temperature: 0.3,
+          max_tokens: 700,
+          messages: [
+            { role: "system", content: DESK_SYSTEM },
+            { role: "user", content: data.message },
+          ],
+        }),
+      });
+      if (!res.ok) {
+        if (res.status === 402 || res.status === 403) {
+          return {
+            ok: false,
+            error: "The model has no credits here. Base64, hash, JSON, JWT, and math still run on this desk.",
+            text: "",
+          };
+        }
+        return { ok: false, error: `The model refused (${res.status}).`, text: "" };
+      }
+      const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+      const text = (json.choices?.[0]?.message?.content ?? "").trim();
+      if (!text) return { ok: false, error: "The model returned nothing.", text: "" };
+      return { ok: true, text };
+    } catch (e) {
+      const aborted = e instanceof Error && e.name === "AbortError";
+      return {
+        ok: false,
+        error: aborted ? "The desk did not answer in time." : "The model could not be reached.",
+        text: "",
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+export const askImage = createServerFn({ method: "POST" })
+  .validator((input: { message: string }) => ({
+    message: String(input?.message ?? "").trim().slice(0, 500),
+  }))
+  .handler(async ({ data }): Promise<{ ok: true; image: string; text: string } | { ok: false; error: string; image: "" }> => {
+    const prompt = data.message.replace(/^(?:draw this:|image:|draw)\s*/i, "").trim();
+    if (!prompt) return { ok: false, error: "Say what to draw.", image: "" };
+    const apiKey = process.env.XAI_API_KEY;
+    if (!apiKey) return { ok: false, error: "The picture model is not connected.", image: "" };
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 28000);
+    try {
+      const res = await fetch("https://api.x.ai/v1/images/generations", {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "grok-imagine-image",
+          prompt,
+          n: 1,
+          response_format: "b64_json",
+        }),
+      });
+      if (!res.ok) {
+        if (res.status === 402 || res.status === 403) {
+          return { ok: false, error: "The picture model has no credits here.", image: "" };
+        }
+        return { ok: false, error: `The picture was refused (${res.status}).`, image: "" };
+      }
+      const json = (await res.json()) as { data?: { b64_json?: string; mime_type?: string }[] };
+      const item = json.data?.[0];
+      const b64 = item?.b64_json ?? "";
+      if (!b64) return { ok: false, error: "The picture model returned nothing.", image: "" };
+      if (b64.length > 280000) return { ok: false, error: "That picture was too large to keep on the counter.", image: "" };
+      const mime = item?.mime_type && /^image\/[a-z0-9.+-]+$/i.test(item.mime_type) ? item.mime_type : "image/jpeg";
+      return { ok: true, image: `data:${mime};base64,${b64}`, text: "Picture made. It stays on this counter until you clear the talk." };
+    } catch (e) {
+      const aborted = e instanceof Error && e.name === "AbortError";
+      return { ok: false, error: aborted ? "The picture took too long." : "The picture did not come back.", image: "" };
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+export const askVideo = createServerFn({ method: "POST" })
+  .validator((input: { message: string }) => ({
+    message: String(input?.message ?? "").trim().slice(0, 500),
+  }))
+  .handler(async ({ data }): Promise<{ ok: true; video: string; text: string } | { ok: false; error: string }> => {
+    const prompt = data.message.replace(/^clip this:\s*/i, "").trim();
+    if (!prompt) return { ok: false, error: "Say what the clip should show." };
+    const apiKey = process.env.XAI_API_KEY;
+    if (!apiKey) return { ok: false, error: "The video model is not connected." };
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 85000);
+    try {
+      const started = await fetch("https://api.x.ai/v1/videos/generations", {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: "grok-imagine-video-1.5-lite",
+          prompt,
+          duration: 4,
+          aspect_ratio: "16:9",
+          resolution: "480p",
+        }),
+      });
+      if (!started.ok) {
+        if (started.status === 402 || started.status === 403) return { ok: false, error: "The video model has no credits here." };
+        return { ok: false, error: `The clip was refused (${started.status}).` };
+      }
+      const first = (await started.json()) as { request_id?: string; video?: { url?: string } };
+      if (first.video?.url) {
+        return { ok: true, video: first.video.url, text: "Clip made. The link expires. It is not saved in the carry file." };
+      }
+      const id = first.request_id;
+      if (!id) return { ok: false, error: "The video model did not start a clip." };
+      const deadline = Date.now() + 75000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        const polled = await fetch(`https://api.x.ai/v1/videos/${id}`, {
+          signal: ctrl.signal,
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (!polled.ok) continue;
+        const json = (await polled.json()) as { status?: string; video?: { url?: string } };
+        if (json.status === "failed") return { ok: false, error: "The clip failed." };
+        if (json.status === "done" && json.video?.url) {
+          return { ok: true, video: json.video.url, text: "Clip made. The link expires. It is not saved in the carry file." };
+        }
+      }
+      return { ok: false, error: "The clip is still rendering. Try a shorter one." };
+    } catch (e) {
+      const aborted = e instanceof Error && e.name === "AbortError";
+      return { ok: false, error: aborted ? "The clip took too long." : "The clip did not come back." };
+    } finally {
+      clearTimeout(timer);
+    }
   });

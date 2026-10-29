@@ -1,4 +1,3 @@
-import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -37,7 +36,7 @@ export function DeskSheet({
             className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-cream"
             aria-label="Close"
           >
-            <X size={18} />
+            CLOSE
           </button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-3">{children}</div>

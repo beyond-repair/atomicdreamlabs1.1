@@ -55,7 +55,7 @@ export type BizState = {
   offerings: Offering[];
   autoOps: boolean;
   fills: PaperFill[];
-  lastSpot: { symbol: string; price: number; ts: number } | null;
+  lastSpot: { symbol: string; price: number; ts: number; live?: boolean } | null;
   lastTest: { ok: boolean; checks: LabCheck[]; ts: number } | null;
   stock: Record<string, number>;
   halted: boolean;
@@ -74,9 +74,9 @@ export type BizState = {
 };
 
 export const DEFAULT_BIZ: BizState = {
-  name: "",
-  pitch: "",
-  rails: { cashApp: "", paypal: "", venmo: "", wallet: "" },
+  name: "Atomic Dream Labs",
+  pitch: "Pay on Cash App. The office does not hold the money.",
+  rails: { cashApp: "$AtomicDreamLabs", paypal: "", venmo: "", wallet: "" },
   offerings: [
     { id: "offer-1", name: "Custom build", price: "150", note: "Lab page, tested, launched here" },
     { id: "offer-2", name: "Paper desk scan", price: "25", note: "BTC mark + a written plan" },
@@ -105,7 +105,12 @@ export function hydrateBiz(b?: Partial<BizState> | null): BizState {
   return {
     ...DEFAULT_BIZ,
     ...b,
-    rails: { ...DEFAULT_BIZ.rails, ...(b?.rails ?? {}) },
+    name: b?.name?.trim() || DEFAULT_BIZ.name,
+    rails: {
+      ...DEFAULT_BIZ.rails,
+      ...(b?.rails ?? {}),
+      cashApp: b?.rails?.cashApp?.trim() || DEFAULT_BIZ.rails.cashApp,
+    },
     offerings: b?.offerings?.length ? b.offerings : DEFAULT_BIZ.offerings,
     fills: b?.fills ?? [],
     stock: { ...DEFAULT_BIZ.stock, ...(b?.stock ?? {}) },
@@ -134,10 +139,14 @@ export function cleanHandle(v: string) {
   return v.replace(/[^A-Za-z0-9._$@/-]/g, "").slice(0, 64);
 }
 
-export function cashAppHref(tag: string) {
+export function cashAppHref(tag: string, amount?: string | number) {
   const t = cleanHandle(tag).replace(/^\$/, "");
   if (!t) return "";
-  return `https://cash.app/$${t}`;
+  const base = `https://cash.app/$${t}`;
+  const n = typeof amount === "number" ? amount : Number(String(amount ?? "").replace(/[^0-9.]/g, ""));
+  if (!Number.isFinite(n) || n <= 0 || n > 10000) return base;
+  const shown = Math.abs(n - Math.round(n)) < 0.001 ? String(Math.round(n)) : n.toFixed(2);
+  return `${base}/${shown}`;
 }
 
 export function paypalHref(v: string) {
@@ -163,9 +172,13 @@ export function shopFiles(biz: BizState): Record<string, string> {
   const wallet = cleanHandle(biz.rails.wallet);
   const offers = biz.offerings
     .filter((o) => o.name.trim())
-    .map(
-      (o) => `<article class="card"><h2>${esc(o.name)}</h2><p class="price">$${esc(o.price)}</p><p>${esc(o.note)}</p></article>`,
-    )
+    .map((o) => {
+      const href = cash ? cashAppHref(biz.rails.cashApp, o.price) : "";
+      const pay = href
+        ? `<a class="pay cash" href="${esc(href)}" target="_blank" rel="noopener">Pay $${esc(o.price)} on Cash App</a>`
+        : "";
+      return `<article class="card"><h2>${esc(o.name)}</h2><p class="price">$${esc(o.price)}</p><p>${esc(o.note)}</p>${pay}</article>`;
+    })
     .join("");
   const payBtns = [
     cash ? `<a class="pay cash" href="${esc(cash)}" target="_blank" rel="noopener">Pay Cash App</a>` : "",
@@ -224,11 +237,10 @@ export function runLabTests(files: Record<string, string>, biz: BizState): { ok:
   const js = files["main.js"] ?? "";
   const blob = `${html}\n${css}\n${js}`;
   const checks: LabCheck[] = [
-    { name: "index.html is a page", ok: html.length > 40 && /<html/i.test(html) },
-    { name: "Has a heading", ok: /<h1/i.test(html) },
-    { name: "styles.css present", ok: css.length > 20 },
-    { name: "main.js present", ok: js.length > 5 },
-    { name: "No leftover TODO crash", ok: !/TODO crash|throw new Error\("fail"\)/.test(blob) },
+    { name: "Pass 1 · the page exists", ok: html.length > 40 && /<html/i.test(html) && /<h1/i.test(html) },
+    { name: "Pass 2 · the script parses", ok: scriptParses(js) },
+    { name: "Pass 3 · styles are real rules", ok: css.length > 20 && css.includes("{") && css.includes("}") },
+    { name: "Pass 4 · a preview can be built", ok: html.length + css.length + js.length > 80 && !/TODO crash|throw new Error\("fail"\)/.test(blob) },
   ];
   const tag = cleanHandle(biz.rails.cashApp).replace(/^\$/, "");
   if (tag) checks.push({ name: "Cash App handle in the lab", ok: /cash\.app/i.test(blob) && blob.toLowerCase().includes(tag.toLowerCase()) });
@@ -249,7 +261,17 @@ export function runLabTests(files: Record<string, string>, biz: BizState): { ok:
   return { ok: checks.every((c) => c.ok), checks };
 }
 
-export async function fetchSpot(symbol: string): Promise<number> {
+function scriptParses(js: string) {
+  if (js.trim().length < 5) return false;
+  try {
+    new Function(js);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchLiveSpot(symbol: string): Promise<{ price: number; live: boolean }> {
   const s = symbol.toUpperCase().trim() || "BTC";
   if (s === "BTC" || s === "ETH") {
     try {
@@ -257,13 +279,17 @@ export async function fetchSpot(symbol: string): Promise<number> {
       const res = await fetch(`https://api.coinbase.com/v2/prices/${pair}/spot`);
       const json = (await res.json()) as { data?: { amount?: string } };
       const n = Number(json.data?.amount);
-      if (Number.isFinite(n) && n > 0) return n;
+      if (Number.isFinite(n) && n > 0) return { price: n, live: true };
     } catch {
-      /* paper fallback */
+      /* paper fallback below */
     }
   }
   const seed = Array.from(s).reduce((a, c) => a + c.charCodeAt(0), 0);
-  return Math.round((80 + (seed % 40) + Math.random() * 6) * 100) / 100;
+  return { price: Math.round((80 + (seed % 40) + Math.random() * 6) * 100) / 100, live: false };
+}
+
+export async function fetchSpot(symbol: string): Promise<number> {
+  return (await fetchLiveSpot(symbol)).price;
 }
 
 function esc(v: string) {

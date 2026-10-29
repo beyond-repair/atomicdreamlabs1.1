@@ -82,6 +82,10 @@ export function matchClub(text: string): ClubZone | null {
   return null;
 }
 
+export function youtubeSearchEmbed(query: string) {
+  return `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(query.trim())}`;
+}
+
 const YT_ID = /^[A-Za-z0-9_-]{11}$/;
 
 export function parseYouTubeId(input: string): string | null {
@@ -110,7 +114,7 @@ export function parseYouTubeId(input: string): string | null {
 }
 
 export const TUBE_REELS: { id: string; title: string; note: string }[] = [
-  { id: "aircAruvnKk", title: "Neural nets, visually", note: "3Blue1Brown · public YouTube" },
+  { id: "aircAruvnKk", title: "Neural net", note: "3Blue1Brown · public YouTube" },
   { id: "DHjqpvDnNGE", title: "JavaScript in 100s", note: "Fireship · public YouTube" },
   { id: "fNk_zzaMoSs", title: "Linear algebra", note: "3Blue1Brown · public YouTube" },
 ];
@@ -123,9 +127,16 @@ export function youtubeWatch(id: string) {
   return `https://www.youtube.com/watch?v=${id}`;
 }
 
+export const TUBE_LINKS: { title: string; href: string; note: string }[] = [
+  { title: "Sign in on YouTube", href: "https://www.youtube.com/signin", note: "Google's page. Nexus never sees the password." },
+  { title: "Your YouTube", href: "https://www.youtube.com/", note: "That tab can use your session. This player stays a public embed." },
+];
+
 export const STEAM_LINKS: { title: string; href: string; note: string }[] = [
+  { title: "Sign in on Steam", href: "https://store.steampowered.com/login/", note: "Valve's page. Nexus never sees the password." },
+  { title: "Open Steam", href: "steam://open/main", note: "Hands off to the Steam app if it is installed." },
   { title: "Steam Store", href: "https://store.steampowered.com/", note: "Opens Valve. Not this floor." },
-  { title: "Steam about", href: "https://store.steampowered.com/about/", note: "Client, library, DRM stay with Steam." },
+  { title: "Your library", href: "https://steamcommunity.com/my/games", note: "Needs the Steam session in that tab." },
 ];
 
 export type Track = { id: string; title: string; bpm: number; seed: number; note: string };

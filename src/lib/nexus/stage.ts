@@ -158,7 +158,22 @@ export const DEFAULT_POLICIES: PolicyRule[] = [
   { id: "restock-cache", title: "Cached restock ≤ 10", pathway: "restock", signed: false, cap: { restockQty: 10 } },
   { id: "drain-hold", title: "Drain a hold", pathway: "drain_holds", signed: false },
   { id: "lab-qa", title: "Lab TEST", pathway: "lab_qa", signed: false },
+  { id: "scan-tick", title: "Market scan", pathway: "market_scan", signed: false },
 ];
+
+export const LOCAL_SHIFT = ["restock-cache", "drain-hold", "lab-qa", "scan-tick"] as const;
+
+/** AUTO signs only the local shift. Live orders, paper tickets, cabinets, and the shop stay unsigned. */
+export function armLocalShift(policies: PolicyRule[]): PolicyRule[] {
+  const ids = new Set<string>(LOCAL_SHIFT);
+  return hydratePolicies(policies).map((p) => (ids.has(p.id) ? { ...p, signed: true } : p));
+}
+
+export function localRestockGoal(sku: string, wanted: number, policies: PolicyRule[]) {
+  const cap = policies.find((p) => p.pathway === "restock")?.cap?.restockQty ?? 10;
+  const qty = Math.max(1, Math.min(wanted, cap || 10));
+  return `restock ${qty} units ${sku}`;
+}
 
 const NEVER_AUTO = new Set([
   "arcade_ship",
@@ -248,6 +263,7 @@ export function matchPolicy(goal: string, pathway: string, policies: PolicyRule[
 }
 
 export function canAutoCommit(goal: string, pathway: string, policies: PolicyRule[], autoOps: boolean) {
+  if (pathway === "live_trade") return false;
   return !!autoOps && !!matchPolicy(goal, pathway, policies);
 }
 

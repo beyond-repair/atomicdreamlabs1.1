@@ -1,15 +1,14 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { runNexusTurn, type ChatWire, type ToolEvent } from "./chat";
-import { authorize as doAuth, commit as doCommit, think as doThink } from "./engine";
+import { askDesk, askImage, askVideo, runNexusTurn, type ChatWire, type ToolEvent } from "./chat";
+import { authorize as doAuth, commit as doCommit } from "./engine";
 import type { PlanStep } from "./knowledge";
-import { DEFAULT_BIZ, fetchSpot, hydrateBiz, runLabTests as testLab, shopFiles, type BizState } from "./business";
-import { DRAWDOWN_LIMIT } from "./adapters";
+import { DEFAULT_BIZ, hydrateBiz, runLabTests as testLab, shopFiles, type BizState } from "./business";
 import { crewForPathway, CREW, CREW_DESK } from "./crew";
 
 import { OBJECT_HINT, OBJECT_TAB, type ObjectId, type OverlayId } from "./room";
 import { CABINET_CAP, hydrateCabinets } from "./arcade";
-import { OBJECT_ROOM, ROOMS, canonicalRoom, isRoomId, matchRoom, type RoomId } from "./campus";
+import { OBJECT_ROOM, ROOMS, canonicalRoom, isRoomId, matchRoom, requestDeck, type DeckId, type RoomId } from "./campus";
 import {
   CLUB_SPEECH,
   DEFAULT_CLUB,
@@ -22,9 +21,12 @@ import {
   type ClubState,
   type ClubZone,
 } from "./club";
-import { executeAuthorized, type RunRecord } from "./runtime";
+import { executeAuthorized, preflight, type RunRecord } from "./runtime";
 import { sha256Hex } from "./hash";
+import { matchPathway } from "./pathways";
 import { tryLocalTurn } from "./localTurn";
+import { extractiveSummary, isDeskAsk, isDeskClip, isDeskImage, localDeskAsk } from "./desk";
+import { placeLiveOrder, readDeskKeys, readLiveCap } from "./broker";
 import { FLOOR_LINE, type Proposal, type ProvenanceEntry, type RealityState, type RoleId, type WorkforceTask } from "./types";
 import { FEATS, featTitle } from "./codex";
 import { WATCH_DEFS, evaluateWatches, hydrateRules, hydrateWatches, inboundHint, type PlantRules } from "./watches";
@@ -35,6 +37,8 @@ import {
   draftStage,
   hydratePolicies,
   hydrateQueue,
+  armLocalShift,
+  localRestockGoal,
   STAGER_JOB,
   STAGER_NAME,
   STAGER_ROLE,
@@ -103,6 +107,7 @@ type NexusState = {
   grantFeat: (id: string) => void;
   meetCrew: (r: RoleId) => void;
   dismissBrief: () => void;
+  clearTalk: () => void;
   setGoalDraft: (v: string) => void;
 
   selectRole: (r: RoleId) => void;
@@ -113,7 +118,7 @@ type NexusState = {
   setActiveFile: (path: string) => void;
   setFileContent: (path: string, content: string) => void;
   send: (forced?: string) => Promise<void>;
-  think: (goal?: string) => void;
+  think: (goal?: string, held?: Record<string, string>) => void;
   authorize: () => void;
   commit: () => Promise<void>;
   resetCycle: () => void;
@@ -126,7 +131,7 @@ type NexusState = {
   setDockTab: (t: "chat" | "lab" | "govern") => void;
   publishShop: () => void;
   runLabTests: () => void;
-  paperFill: (symbol: string, side: "buy" | "sell", qty: number) => Promise<void>;
+  paperFill: (symbol: string, side: "buy" | "sell", qty: number) => void;
   armWatch: (id: string, armed: boolean) => void;
   inbound: (qty?: number) => Promise<void>;
   tickPlant: () => Promise<void>;
@@ -141,7 +146,7 @@ type NexusState = {
   setTune: (id: string | null) => void;
   recordScore: (row: Omit<ClubScore, "ts">) => void;
   recordDuel: (row: ClubDuel) => void;
-  stageCrew: (stager: StagerId, goal?: string) => Promise<void>;
+  stageCrew: (stager: StagerId, goal?: string, held?: Record<string, string>) => Promise<void>;
   pickPacket: (id: string) => void;
   commitPacket: (id: string) => Promise<void>;
   commitAll: () => Promise<void>;
@@ -158,7 +163,18 @@ type NexusState = {
 
 const GREET =
   "Office is live. Tap a desk, or tell me what to run. GOVERN is THINK → AUTH → COMMIT. You hold the key. Paper / local.";
-const HELLO = "Crew is on the floor. You hold the key.";
+const HELLO = "Work at the counter. Sell on Cash App. Build in the lab. You hold COMMIT.";
+
+function labFilesOf(payload: Record<string, unknown> | undefined): Record<string, string> | undefined {
+  const raw = payload?.labFiles;
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value !== "string" || key.includes("..") || key.startsWith("/") || key.includes("\\")) continue;
+    out[key] = value.slice(0, 80000);
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 function nid() {
   return Math.random().toString(16).slice(2, 10);
@@ -167,7 +183,7 @@ function nid() {
 export const useNexus = create<NexusState>()(
   persist(
     (set, get) => {
-  const applyRun = async (proposal: Proposal, extra: ProvenanceEntry[]) => {
+  const applyRun = async (proposal: Proposal, extra: ProvenanceEntry[], draft?: Record<string, string>) => {
     set({ busy: true, lastError: null });
     const world = {
       gold: get().gold,
@@ -175,7 +191,17 @@ export const useNexus = create<NexusState>()(
       files: get().files,
       logTail: get().log.slice(-8),
     };
-    const { run, effects } = await executeAuthorized(proposal, world);
+    let next = proposal;
+    if (next.pathway === "live_trade" && !preflight(next, world)) {
+      const keys = readDeskKeys();
+      const placed = await placeLiveOrder({ data: { ...keys, goal: next.goal, cap: readLiveCap() } });
+      if (!placed.ok) {
+        set({ busy: false, lastError: placed.error, speech: placed.error, dockTab: "govern" });
+        return false;
+      }
+      next = { ...next, goal: `${next.goal} · broker ${placed.orderId} @ ${placed.price}` };
+    }
+    const { run, effects } = await executeAuthorized(next, world);
     const execLog: ProvenanceEntry = {
       id: nid(),
       kind: run.ok ? "execute" : "refuse",
@@ -230,13 +256,13 @@ export const useNexus = create<NexusState>()(
       const earned = nextFeats.filter((id) => !(s.feats ?? []).includes(id));
       return {
         busy: false,
-        activeProposal: { ...proposal, executed: true, status: "committed" },
+        activeProposal: { ...next, executed: true, status: "committed" },
         tasks: s.tasks,
         log: [...s.log, ...extra, execLog],
         gold,
         crewGold,
         feats: nextFeats,
-        files: effects.files ?? s.files,
+        files: draft && run.ok ? { ...(effects.files ?? s.files), ...draft } : (effects.files ?? s.files),
         plan: effects.plan?.length ? effects.plan : s.plan,
         biz: effects.biz ?? s.biz,
         lastRun: run,
@@ -253,6 +279,7 @@ export const useNexus = create<NexusState>()(
       };
     });
     window.setTimeout(() => set({ working: [] }), 3200);
+    return true;
   };
 
   return {
@@ -323,6 +350,7 @@ export const useNexus = create<NexusState>()(
     }));
   },
   dismissBrief: () => set({ briefed: true, speech: GREET }),
+  clearTalk: () => set({ messages: [], speech: "Counter is clear.", lastError: null }),
 
   openOverlay: (id) => {
     const dest = OBJECT_ROOM[id];
@@ -414,6 +442,7 @@ export const useNexus = create<NexusState>()(
       };
       get().setRoom("arcade");
       get().setClubZone(clubDest);
+      requestDeck(clubDest === "tapes" ? "arcade" : "lounge");
       set((s) => ({
         busy: false,
         working: [],
@@ -461,63 +490,140 @@ export const useNexus = create<NexusState>()(
       const local = await tryLocalTurn(text, get().files, get().biz);
       if (local) {
         const extra: ChatMessage[] = local.messages.map((m) => ({ ...m, id: nid(), ts: Date.now() }));
-        const wroteDemo = local.events.some((e) => e.name === "write_file" && e.detail === "index.html");
-        const sundered = local.events.some((e) => e.name === "sunder");
-        const planned = local.events.some((e) => e.name === "set_plan");
-        set((s) => {
-          const feats = [...(s.feats ?? [])];
-          let gold = s.gold + (wroteDemo ? 40 : 10);
-          let crewGold = s.crewGold ?? 0;
-          crewGold += 8;
-          const feat = wroteDemo ? "build" : sundered ? "sunder" : planned ? "horizon" : null;
-          if (feat && !feats.includes(feat)) {
-            feats.push(feat);
-            gold += FEATS.find((f) => f.id === feat)?.gold ?? 5;
-          }
-          return {
+        const needsCommit = local.events.some((e) => e.name === "needs_commit");
+        set((s) => ({
+          busy: false,
+          working: [],
+          messages: [...s.messages, ...extra],
+          events: [...s.events, ...local.events].slice(-40),
+          selectedRole: local.speaker,
+          speech: extra.at(-1)?.content ?? s.speech,
+          checks: local.checks.length ? local.checks : s.checks,
+          plan: local.plan.length ? local.plan : s.plan,
+          lastError: null,
+          dockTab: needsCommit ? "govern" : "chat",
+        }));
+        if (needsCommit) get().think(text);
+        if (local.events.some((e) => e.name === "arcade_spec")) get().think("ship arcade cabinet");
+        return;
+      }
+      if (isDeskClip(text)) {
+        const clip = await Promise.race([
+          askVideo({ data: { message: text } }),
+          new Promise<never>((_, reject) => {
+            window.setTimeout(() => reject(new Error("The clip took too long. The counter is free again.")), 90000);
+          }),
+        ]);
+        const line: ChatMessage = {
+          id: nid(),
+          ts: Date.now(),
+          role: "assistant",
+          name: "operator",
+          content: clip.ok ? clip.text : clip.error,
+          ...(clip.ok ? { video: clip.video } : {}),
+        };
+        set((s) => ({
+          busy: false,
+          working: [],
+          messages: [...s.messages, line],
+          speech: line.content,
+          lastError: null,
+          dockTab: "chat",
+        }));
+        return;
+      }
+      if (isDeskImage(text)) {
+        const drawn = await Promise.race([
+          askImage({ data: { message: text } }),
+          new Promise<never>((_, reject) => {
+            window.setTimeout(() => reject(new Error("The picture took too long. The counter is free again.")), 30000);
+          }),
+        ]);
+        const line: ChatMessage = {
+          id: nid(),
+          ts: Date.now(),
+          role: "assistant",
+          name: "operator",
+          content: drawn.ok ? drawn.text : drawn.error,
+          ...(drawn.ok ? { image: drawn.image } : {}),
+        };
+        set((s) => ({
+          busy: false,
+          working: [],
+          messages: [...s.messages, line],
+          speech: line.content,
+          lastError: null,
+          dockTab: "chat",
+        }));
+        return;
+      }
+      if (isDeskAsk(text)) {
+        const asked = await Promise.race([
+          askDesk({ data: { message: text } }),
+          new Promise<never>((_, reject) => {
+            window.setTimeout(() => reject(new Error("The desk did not answer. The counter is free again.")), 20000);
+          }),
+        ]);
+        if (!asked.ok) {
+          const local = localDeskAsk(text);
+          const cut = local ? null : extractiveSummary(text);
+          const content = local?.body ?? (cut ? `${cut}\n\nExtract, not a model. ${asked.error}` : asked.error);
+          const line: ChatMessage = {
+            id: nid(),
+            ts: Date.now(),
+            role: "assistant",
+            name: "operator",
+            content,
+          };
+          if (local?.files) requestDeck("lab");
+          set((s) => ({
             busy: false,
             working: [],
-            messages: [...s.messages, ...extra],
-            files: local.files ?? s.files,
-            events: [...s.events, ...local.events].slice(-40),
-            selectedRole: local.speaker,
-            speech: extra.at(-1)?.content ?? s.speech,
-            gold,
-            crewGold,
-            feats,
-            overlay: wroteDemo ? null : sundered ? "files" : planned ? "plan" : s.overlay,
-            labPane: wroteDemo ? "run" : s.labPane,
-            plan: local.plan.length ? local.plan : s.plan,
-            checks: local.checks.length ? local.checks : s.checks,
+            messages: [...s.messages, line],
+            speech: content,
             lastError: null,
-            dockTab: wroteDemo ? "lab" : "chat",
-            activeFile: wroteDemo ? "index.html" : s.activeFile,
-            room: wroteDemo ? "compute" : s.room,
-          };
-        });
-
-        const workers = Array.from(new Set(local.events.map((e) => e.actor)));
-        if (workers.length) {
-          set({ working: workers });
-          window.setTimeout(() => set({ working: [] }), 2800);
+            dockTab: "chat",
+            ...(local?.files
+              ? { files: { ...s.files, ...local.files }, activeFile: "index.html", labPane: "run" as const }
+              : {}),
+          }));
+          return;
         }
-        if (local.events.some((e) => e.name === "arcade_spec")) {
-          get().think("ship arcade cabinet");
-        }
+        const line: ChatMessage = {
+          id: nid(),
+          ts: Date.now(),
+          role: "assistant",
+          name: "operator",
+          content: asked.text,
+        };
+        set((s) => ({
+          busy: false,
+          working: [],
+          messages: [...s.messages, line],
+          speech: asked.text,
+          selectedRole: "operator",
+          lastError: null,
+          dockTab: "chat",
+        }));
         return;
       }
       const history = get()
         .messages.filter((m) => m.id !== userMsg.id)
         .map(({ role, name, content }) => ({ role, name, content }));
-      const result = await runNexusTurn({
-        data: {
-          message: text,
-          history,
-          files: get().files,
-          plan: get().plan,
-          shop: get().biz,
-        },
-      });
+      const result = await Promise.race([
+        runNexusTurn({
+          data: {
+            message: text,
+            history,
+            files: get().files,
+            plan: get().plan,
+            shop: get().biz,
+          },
+        }),
+        new Promise<never>((_, reject) => {
+          window.setTimeout(() => reject(new Error("That order did not finish. The counter is free again.")), 22000);
+        }),
+      ]);
       if (!result.ok) {
         set({
           busy: false,
@@ -534,29 +640,29 @@ export const useNexus = create<NexusState>()(
         ts: Date.now(),
       }));
       const wrote = result.events.some((e) => e.name === "write_file");
+      const held = wrote ? result.files : undefined;
       set((s) => ({
         busy: false,
         working: [],
         messages: [...s.messages, ...extra],
-        files: result.files ?? s.files,
         events: [...s.events, ...result.events].slice(-40),
         selectedRole: result.speaker,
-        speech: extra.at(-1)?.content ?? s.speech,
-        gold: s.gold + (wrote ? 40 : 10),
-        overlay: wrote ? null : s.overlay,
-        labPane: wrote ? "run" : s.labPane,
-        room: wrote ? "compute" : s.room,
-        dockTab: wrote ? "lab" : s.dockTab,
+        speech: wrote
+          ? "Draft is on the gate. COMMIT writes the lab. Nothing landed yet."
+          : (extra.at(-1)?.content ?? s.speech),
+        gold: wrote ? s.gold : s.gold + 10,
         plan: result.plan.length ? result.plan : s.plan,
         checks: result.checks.length ? result.checks : s.checks,
         lastError: null,
+        dockTab: wrote ? "govern" : s.dockTab,
       }));
       const workers = Array.from(new Set(result.events.map((e) => e.actor)));
       if (workers.length) {
         set({ working: workers });
         window.setTimeout(() => set({ working: [] }), 2800);
       }
-      if (result.incomplete && !forced) {
+      if (wrote && held) get().think(text, held);
+      if (result.incomplete && !forced && !wrote) {
         window.setTimeout(() => {
           void get().send("Continue the plan until tests pass. Do not wait.");
         }, 400);
@@ -569,28 +675,21 @@ export const useNexus = create<NexusState>()(
       });
     }
   },
-  think: (goalArg) => {
-    const goal =
-      goalArg?.trim() ||
-      get().goalDraft.trim() ||
-      get().messages.filter((m) => m.role === "user").at(-1)?.content;
+  think: (goalArg, held) => {
+    const goal = (goalArg ?? get().goalDraft).trim();
     if (!goal) {
-      set({ lastError: "State an objective first.", speech: "Give me an objective first." });
+      set({
+        lastError: "Type the order in the box, then THINK.",
+        speech: "The box is empty. Type the order, then THINK.",
+        dockTab: "govern",
+      });
       return;
     }
-    const { reality, proposal, provenance } = doThink(goal, { path: "office" });
-    set((s) => ({
-      lastReality: reality,
-      activeProposal: proposal,
-      log: [...s.log, provenance],
-      lastError: null,
-      overlay: s.overlay,
-      selectedNode: get().view === "command" ? "dec-horizon" : s.selectedNode,
-      dockTab: "govern",
-      goalDraft: "",
-      speech: `${proposal.pathwayTitle ?? "Pathway"} ready. AUTH opens the gate.`,
-    }));
-
+    const path = matchPathway(goal);
+    const stager: StagerId =
+      path.kind === "lab" ? "rix" : path.kind === "trade" ? "vex" : path.kind === "ops" ? "hal" : "nyx";
+    set({ goalDraft: "", lastError: null, dockTab: "govern" });
+    void get().stageCrew(stager, goal, held);
   },
   authorize: () => {
     const p = get().activeProposal;
@@ -627,7 +726,9 @@ export const useNexus = create<NexusState>()(
       return;
     }
     set((s) => ({ tasks: [...s.tasks, result.task] }));
-    await applyRun(result.proposal, [result.provenance]);
+    const held = labFilesOf(hydrateQueue(get().queue).find((pkt) => pkt.proposal.id === result.proposal.id)?.payload);
+    const finished = await applyRun(result.proposal, [result.provenance], held);
+    if (finished === false) return;
     set((s) => ({
       queue: hydrateQueue(s.queue).filter((p) => p.proposal.id !== result.proposal.id),
     }));
@@ -679,7 +780,7 @@ export const useNexus = create<NexusState>()(
       dockTab: "lab",
       working: ["engineer", "cpo"],
       speech: tested.ok
-        ? "Shop published into the lab. RUN is live. TEST passed."
+        ? "Shop is in the lab, and buyers can pay at /shop. Each offer opens Cash App with the price. TEST passed."
         : "Shop published. TEST found gaps — open TEST.",
       biz: { ...get().biz, lastTest: { ...tested, ts: Date.now() } },
     });
@@ -699,42 +800,14 @@ export const useNexus = create<NexusState>()(
     });
     window.setTimeout(() => set({ working: [] }), 2200);
   },
-  paperFill: async (symbol, side, qty) => {
+  paperFill: (symbol, side, qty) => {
     if (get().biz.halted) {
       set({ lastError: "desk is halted — resume first", speech: "Desk is halted. Resume before paper fills." });
       return;
     }
-    const price = await fetchSpot(symbol);
     const q = Math.max(0.0001, qty);
-    const goldDelta = side === "sell" ? Math.round(price * q * 0.002) : -Math.round(price * q * 0.002);
-    const fill = {
-      id: nid(),
-      symbol: symbol.toUpperCase(),
-      side,
-      qty: q,
-      price,
-      ts: Date.now(),
-    };
-    set((s) => {
-      const gold = Math.max(0, s.gold + goldDelta);
-      const biz = hydrateBiz(s.biz);
-      const peak = Math.max(biz.peakGold ?? gold, gold);
-      const drawdown = peak > 0 ? Math.max(0, (peak - gold) / peak) : 0;
-      return {
-        gold,
-        working: ["cpo", "operator"],
-        speech: `Paper ${side} ${q} ${symbol.toUpperCase()} @ ${price.toFixed(2)}. Not a live broker.`,
-        biz: {
-          ...biz,
-          peakGold: peak,
-          drawdown,
-          halted: biz.halted || drawdown > DRAWDOWN_LIMIT,
-          lastSpot: { symbol: symbol.toUpperCase(), price, ts: Date.now() },
-          fills: [fill, ...biz.fills].slice(0, 24),
-        },
-      };
-    });
-    window.setTimeout(() => set({ working: [] }), 2200);
+    get().think(`paper ${side} ${q} ${symbol.toUpperCase()}`);
+    set({ speech: `Paper ${side} staged. AUTH is done by the crew. COMMIT fills. Not a live order.` });
   },
   armWatch: (id, armed) => {
     const def = WATCH_DEFS.find((w) => w.id === id);
@@ -771,9 +844,25 @@ export const useNexus = create<NexusState>()(
     set({ speech: `Inbound ${n} ${biz.rules.sku}. AUTH to fulfill. Short parks a HOLD. Not Shopify.` });
   },
   tickPlant: async () => {
-    const s = get();
+    let s = get();
     if (s.busy) return;
-    const biz = hydrateBiz(s.biz);
+    let biz = hydrateBiz(s.biz);
+    if (biz.autoOps) {
+      const policies = armLocalShift(s.policies);
+      const watches = hydrateWatches(biz.watches);
+      let changed = policies.some((p, i) => p.signed !== hydratePolicies(s.policies)[i]?.signed);
+      for (const id of ["stock_low", "drain", "scan_tick"] as const) {
+        if (!watches[id]?.armed) {
+          watches[id] = { ...watches[id], armed: true, lastReason: "auto" };
+          changed = true;
+        }
+      }
+      if (changed) {
+        set({ policies, biz: { ...biz, watches } });
+        s = get();
+        biz = hydrateBiz(s.biz);
+      }
+    }
     const fires = evaluateWatches({
       stock: biz.stock,
       lastScan: biz.lastScan,
@@ -793,7 +882,11 @@ export const useNexus = create<NexusState>()(
     const watches = hydrateWatches(biz.watches);
     watches[hit.id] = { ...watches[hit.id], lastFire: Date.now(), lastReason: hit.reason };
     set({ biz: { ...biz, watches }, lastWatchAt: Date.now() });
-    await get().stageCrew(stager, hit.hint);
+    const hint =
+      biz.autoOps && hit.id === "stock_low"
+        ? localRestockGoal(biz.rules.sku, biz.rules.restockQty, hydratePolicies(get().policies))
+        : hit.hint;
+    await get().stageCrew(stager, hint);
   },
   setRoom: (r) => {
     const raw = isRoomId(r) ? r : "office";
@@ -895,7 +988,7 @@ export const useNexus = create<NexusState>()(
     window.setTimeout(() => set({ working: [] }), 2200);
     if (tested.ok) void get().stageCrew("rix", "ship arcade cabinet");
   },
-  stageCrew: async (stager, goal) => {
+  stageCrew: async (stager, goal, held) => {
     const s = get();
     const biz = hydrateBiz(s.biz);
     const policies = hydratePolicies(s.policies);
@@ -907,6 +1000,11 @@ export const useNexus = create<NexusState>()(
       set({ lastError: drafted.error, speech: drafted.error });
       return;
     }
+    const draft = labFilesOf({ labFiles: held });
+    if (draft) {
+      drafted.packet.payload = { ...drafted.packet.payload, labFiles: draft };
+      drafted.packet.reason = "Lab draft. Lands on COMMIT.";
+    }
     if (drafted.packet.pathway === "sesa_cycle" || drafted.packet.pathway === "sesa_revert") {
       drafted.packet.origin = "compute";
       drafted.packet.reason =
@@ -915,7 +1013,8 @@ export const useNexus = create<NexusState>()(
           : "VSA bind. SMT first. Ring waits on COMMIT.";
     }
     if (alreadyQueued(queue, stager, drafted.packet.pathway)) {
-      set({ speech: `${STAGER_NAME[stager]} already has a packet on the desk.` });
+      const line = `${STAGER_NAME[stager]} already has that packet. COMMIT it or CLEAR it.`;
+      set({ lastError: line, speech: line, dockTab: "govern" });
       return;
     }
     try {
@@ -970,11 +1069,12 @@ export const useNexus = create<NexusState>()(
       set({ lastError: done.error, speech: done.error });
       return;
     }
+    const held = labFilesOf(packet.payload);
     set((st) => ({
       tasks: [...st.tasks, done.task],
       queue: hydrateQueue(st.queue).filter((p) => p.id !== id),
     }));
-    await applyRun(done.proposal, [done.provenance]);
+    await applyRun(done.proposal, [done.provenance], held);
   },
   commitAll: async () => {
     const s = get();
@@ -1060,7 +1160,7 @@ export const useNexus = create<NexusState>()(
       return {
         biz: { ...biz, autoOps: on },
         speech: on
-          ? "AUTO AUTH. COMMIT only inside a signed cap. Cabinets never auto."
+          ? "AUTO on. The crew restocks up to 10, drains holds, and scans the market. Paper tickets, live orders, cabinets, and the shop still wait for you."
           : "AUTO off. Crew can still stage. You COMMIT.",
         dockTab: "govern",
       };
@@ -1118,7 +1218,7 @@ export const useNexus = create<NexusState>()(
         log: s.log.slice(-40),
         tasks: s.tasks,
         plan: s.plan,
-        messages: s.messages.slice(-24),
+        messages: s.messages.slice(-24).map((m, i, all) => (m.image && i !== all.length - 1 ? { ...m, image: undefined } : m)),
         biz: s.biz,
         lastRun: s.lastRun ?? null,
         runs: (s.runs ?? []).slice(0, 12),

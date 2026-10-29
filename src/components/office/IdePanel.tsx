@@ -34,21 +34,18 @@ export function IdePanel({ embedded = false }: { embedded?: boolean }) {
       )}
     >
       {embedded ? null : (
-        <header className="flex items-center justify-between border-b-2 border-ink bg-wood px-3 py-2">
-          <h2 className="font-body text-2xl text-gold">Lab IDE</h2>
-          <p className="font-body text-lg text-cream">Edit → TEST → RUN in this office.</p>
+        <header className="flex items-center justify-between border-b-2 border-ink bg-black px-3 py-2">
+          <h2 className="font-body text-2xl text-cream">Lab</h2>
+          <p className="font-body text-lg text-cream">Edit, then TEST, then RUN.</p>
         </header>
       )}
-      <div className="flex flex-wrap gap-1 border-b-2 border-ink p-2">
+      <div className="flex flex-wrap gap-1 border-b border-neutral-800 p-2">
         {(["edit", "test", "run"] as const).map((p) => (
           <button
             key={p}
             type="button"
             onClick={() => (p === "test" ? runLabTests() : setLabPane(p))}
-            className={cn(
-              "min-h-11 px-3 font-pixel text-[8px]",
-              pane === p ? "bg-gold text-ink" : "bg-wood text-cream",
-            )}
+            className={cn("lab-tab", pane === p && "on")}
           >
             {p.toUpperCase()}
           </button>
@@ -62,9 +59,7 @@ export function IdePanel({ embedded = false }: { embedded?: boolean }) {
                 <button
                   type="button"
                   onClick={() => setActiveFile(path)}
-                  className={`min-h-11 w-full px-2 text-left font-body text-xl ${
-                    activeFile === path ? "bg-gold text-ink" : "bg-wood text-cream"
-                  }`}
+                  className={cn("lab-tab", activeFile === path && "on")}
                 >
                   {path}
                 </button>

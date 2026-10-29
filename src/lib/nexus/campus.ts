@@ -108,50 +108,192 @@ export const HUB_TOOLS: { id: ObjectId; chip: string }[] = [
 
 export type VaultPose = "cheer" | "talk" | "work" | "sit" | "trophy" | "wave";
 
+/** Physical rooms the crew can walk to. Several rooms share a floor and a hall. */
+export type DeckId =
+  | "core"
+  | "proof"
+  | "lab"
+  | "stacks"
+  | "service"
+  | "plant"
+  | "trade"
+  | "arcade"
+  | "lounge"
+  | "lobby";
+
+export type LiftFloorId = "core" | "lab" | "desk" | "play" | "lobby";
+
+export const DECK_FLOOR: Record<DeckId, LiftFloorId> = {
+  core: "core",
+  proof: "core",
+  lab: "lab",
+  stacks: "lab",
+  service: "lab",
+  plant: "desk",
+  trade: "desk",
+  arcade: "play",
+  lounge: "play",
+  lobby: "lobby",
+};
+
+/** Walk target, percent across the room column. The pad is near 8. */
+export const SPOT: Record<DeckId, number> = {
+  core: 26,
+  proof: 74,
+  lab: 20,
+  stacks: 50,
+  service: 86,
+  plant: 28,
+  trade: 74,
+  arcade: 28,
+  lounge: 74,
+  lobby: 56,
+};
+
+export const DECK_HALL: Record<DeckId, HallId> = {
+  core: "office",
+  proof: "office",
+  lab: "office",
+  stacks: "office",
+  service: "office",
+  plant: "exchange",
+  trade: "exchange",
+  arcade: "arcade",
+  lounge: "arcade",
+  lobby: "office",
+};
+
 export type VaultCell = {
+  deck: DeckId;
   room: HallId;
-  art: string;
+  art?: string;
   name: string;
-  role: "engineer" | "qa" | "cpo" | "pm" | "operator" | "cto";
-  pose: VaultPose;
   blurb: string;
-  span?: 1 | 2;
+  hatch?: boolean;
 };
 
 export type VaultFloorDef = {
-  id: string;
+  id: LiftFloorId;
   label: string;
   mark: string;
   rooms: VaultCell[];
 };
 
-/** Fallout Shelter cutaway — three workplaces. */
+/** Cutaway of working rooms. Tap a room. Crew lock a pad and jump. */
 export const VAULT_FLOORS: VaultFloorDef[] = [
   {
-    id: "desk",
-    label: "BUSINESS",
-    mark: "2F",
+    id: "core",
+    label: "CORE",
+    mark: "4",
     rooms: [
-      { room: "exchange", art: "/vault/office-core.png", name: "VEX", role: "cpo", pose: "work", blurb: "Plant. Dropship. Paper trade.", span: 2 },
+      { deck: "core", room: "office", art: "/vault/kernel-room.png", name: "SESA", blurb: "A proof, when you ask." },
+      { deck: "proof", room: "office", art: "/vault/kernel-console.png", name: "PROOF", blurb: "The record." },
+    ],
+  },
+  {
+    id: "lab",
+    label: "LAB",
+    mark: "3",
+    rooms: [
+      { deck: "lab", room: "office", art: "/vault/office-core.png", name: "LAB", blurb: "Build." },
+      { deck: "stacks", room: "office", art: "/vault/archive.png", name: "STACKS", blurb: "Notes." },
+      { deck: "service", room: "office", name: "ACCOUNTS", blurb: "Keys." },
+    ],
+  },
+  {
+    id: "desk",
+    label: "DESK",
+    mark: "2",
+    rooms: [
+      { deck: "plant", room: "exchange", art: "/vault/sesa-env.png", name: "PLANT", blurb: "Sell." },
+      { deck: "trade", room: "exchange", art: "/vault/wing.png", name: "TRADE", blurb: "Paper, then COMMIT." },
     ],
   },
   {
     id: "play",
     label: "PLAY",
-    mark: "1F",
+    mark: "1",
     rooms: [
-      { room: "arcade", art: "/vault/arcade-hall.png", name: "RIX", role: "engineer", pose: "cheer", blurb: "Arcade. Tube. Steam.", span: 2 },
+      { deck: "arcade", room: "arcade", art: "/vault/arcade-hall.png", name: "ARCADE", blurb: "Play." },
+      { deck: "lounge", room: "arcade", art: "/vault/theater-cell.png", name: "LOUNGE", blurb: "Watch." },
     ],
   },
   {
     id: "lobby",
     label: "LOBBY",
-    mark: "0F",
-    rooms: [
-      { room: "office", art: "/vault/lounge-cell.png", name: "MOLT", role: "operator", pose: "talk", blurb: "The counter is chat.", span: 2 },
-    ],
+    mark: "0",
+    rooms: [{ deck: "lobby", room: "office", art: "/vault/lounge-cell.png", name: "COUNTER", blurb: "Work." }],
   },
 ];
+
+const JOB_DECK: Record<string, DeckId> = {
+  arcade_ship: "arcade",
+  restock: "plant",
+  paper_trade: "trade",
+  mean_reversion: "trade",
+  risk_halt: "proof",
+  drain_holds: "proof",
+  shop_publish: "plant",
+  lab_qa: "lab",
+  lab_build: "lab",
+  sesa_cycle: "core",
+  sesa_revert: "core",
+};
+
+const STAGER_DECK: Record<string, DeckId> = {
+  nyx: "proof",
+  rix: "lab",
+  vex: "trade",
+  hal: "stacks",
+  molt: "lobby",
+};
+
+/** Opening a room pulls this pair. They ride together and work the tool. */
+const ROOM_CREW: Partial<Record<DeckId, RoleId[]>> = {
+  arcade: ["engineer", "qa"],
+  lounge: ["engineer", "pm"],
+  plant: ["cpo", "pm"],
+  trade: ["cpo", "qa"],
+  lab: ["engineer", "qa"],
+  stacks: ["pm", "cpo"],
+  core: ["qa", "engineer"],
+  proof: ["qa", "pm"],
+  service: ["pm", "engineer"],
+};
+
+export function crewPost(
+  role: RoleId,
+  args: {
+    queue: StagePacket[];
+    working: RoleId[];
+    open: DeckId | null;
+    pathway?: string | null;
+    low?: boolean;
+    holds?: number;
+    playing?: boolean;
+    tube?: boolean;
+  },
+): { deck: DeckId; task: string; locked: boolean } {
+  const staged = args.queue.find((p) => !p.proposal.executed && STAGER_ROLE[p.stager as StagerId] === role);
+  if (staged) {
+    const deck = JOB_DECK[staged.pathway] ?? STAGER_DECK[staged.stager] ?? "lobby";
+    return { deck, task: staged.title.slice(0, 24), locked: true };
+  }
+  if (args.working.includes(role)) {
+    const deck =
+      (args.pathway && JOB_DECK[args.pathway]) ||
+      (role === "engineer" ? "lab" : role === "cpo" ? "plant" : role === "qa" ? "proof" : "stacks");
+    return { deck, task: "On the job", locked: true };
+  }
+  if (args.open && args.open !== "lobby" && ROOM_CREW[args.open]?.includes(role)) {
+    return { deck: args.open, task: "Staffing", locked: true };
+  }
+  if (role === "cpo" && args.low) return { deck: "plant", task: "Low stock", locked: true };
+  if (role === "pm" && (args.holds ?? 0) > 0) return { deck: "proof", task: "Holds", locked: true };
+  if (role === "engineer" && args.playing) return { deck: "arcade", task: "Cabinet", locked: true };
+  if (role === "pm" && args.tube) return { deck: "lounge", task: "Tube", locked: true };
+  return { deck: "lobby", task: "Counter", locked: false };
+}
 
 export const VAULT_STAGER_ROOM: Record<string, HallId> = {
   nyx: "exchange",
@@ -174,6 +316,24 @@ export function crewHall(
   if (args.viewing === "arcade" && role === "engineer") return "arcade";
   if (args.viewing === "exchange" && (role === "cpo" || role === "qa")) return "exchange";
   return "office";
+}
+
+let deckReq = { deck: "lobby" as DeckId, n: 0, station: "" };
+const deckSubs = new Set<() => void>();
+
+/** Open a room from the dock or the teleporter. Optional station runs inside that room. */
+export function requestDeck(deck: DeckId, station = "") {
+  deckReq = { deck, n: deckReq.n + 1, station };
+  for (const fn of deckSubs) fn();
+}
+
+export function deckRequest() {
+  return deckReq;
+}
+
+export function subscribeDeck(fn: () => void) {
+  deckSubs.add(fn);
+  return () => deckSubs.delete(fn);
 }
 
 export function isCampus(room: RoomId) {

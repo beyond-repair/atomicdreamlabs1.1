@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { bollinger, bookPositions, macdCrosses, rsi, supplierQuotes, synthBars } from "./adapters.ts";
-import { DEFAULT_BIZ, hydrateBiz } from "./business.ts";
+import { DEFAULT_BIZ, cashAppHref, hydrateBiz, shopFiles } from "./business.ts";
+import { allowOrder, deskAllows, nextPaidStatus, offerQuote, publicSlip, sealText } from "./paid.ts";
 import { authorize, buildReality, classifyScenario, commit, think } from "./engine.ts";
 import { sha256Hex } from "./hash.ts";
 import { looksLikeBuild, looksLikeCodex, looksLikeFactory, looksLikeHorizon, looksLikeSunder, looksLikeWeather } from "./knowledge.ts";
@@ -15,16 +16,22 @@ import { pickMove } from "./chessAi.ts";
 
 
 import { CODEX, FEATS, inspectCatalog, inspectCodex, liveCount } from "./codex.ts";
-import { matchPathway, parseTrade, parseRestock } from "./pathways.ts";
+import { matchPathway, parseTrade, parseRestock, PATHWAYS, registeredPathway } from "./pathways.ts";
+import { liveNotionalOk } from "./broker.ts";
 import { executeAuthorized } from "./runtime.ts";
 import { matchDemo } from "./demos.ts";
-import { scanLab, applySunder } from "./sunder.ts";
+import { scanLab, applySunder, renderScan, renderSunder } from "./sunder.ts";
 import { tryLocalTurn } from "./localTurn.ts";
+import { matchDesk, stageDesk, isDeskAsk, isDeskImage, extractiveSummary, localDeskAsk } from "./desk.ts";
+import { packCarry, unpackCarry } from "./carry.ts";
+import { ledgerRows, renderLedger } from "./ledger.ts";
 import { evaluateWatches, hydrateWatches, inboundHint, DEFAULT_RULES } from "./watches.ts";
 import {
   asGovernEvent,
   canAutoCommit,
   draftStage,
+  armLocalShift,
+  localRestockGoal,
   hydratePolicies,
   matchPolicy,
   STAGER_HEX,
@@ -90,6 +97,35 @@ describe("nexus engine 0.5", () => {
     const { proposal } = think("paper buy 0.1 BTC");
     assert.equal(proposal.pathway, "paper_trade");
     assert.equal(proposal.workforceHint, "cpo");
+    assert.equal(think("live buy 0.001 BTC").proposal.pathway, "live_trade");
+  });
+
+  it("a live order cannot auto-commit and does not fill without Coinbase", async () => {
+    const policies = hydratePolicies();
+    assert.equal(canAutoCommit("live buy 0.001 BTC", "live_trade", policies, true), false);
+    assert.equal(liveNotionalOk(0.001, 100_000, 25), "That ticket is $100.00. The cap is $25.");
+    assert.equal(liveNotionalOk(0.001, 100, 25), null);
+    const { run, effects } = await runGoal("live buy 0.001 BTC");
+    assert.equal(run.ok, false);
+    assert.match(run.detail, /Nothing was filled/);
+    assert.equal(effects.gold, undefined);
+  });
+
+  it("refuses an id that is not in the registry instead of running assign", async () => {
+    const { proposal } = think("paper buy 0.1 BTC");
+    const auth = authorize(proposal);
+    assert.equal("proposal" in auth, true);
+    if (!("proposal" in auth)) return;
+    const forged = { ...auth.proposal, pathway: "live_broker" };
+    const { run, effects } = await executeAuthorized(forged, world());
+    assert.equal(run.ok, false);
+    assert.equal(run.pathway, "live_broker");
+    assert.match(run.detail, /unregistered pathway live_broker/);
+    assert.equal(effects.gold, undefined);
+    assert.equal(effects.biz, undefined);
+    assert.equal(run.steps.find((s) => s.name === "GATE")?.ok, false);
+    assert.equal(registeredPathway("live_broker"), null);
+    assert.equal(PATHWAYS.every((p) => registeredPathway(p.id)?.id === p.id), true);
   });
 
   it("refuses commit without authorize", () => {
@@ -111,7 +147,24 @@ describe("nexus engine 0.5", () => {
     if ("proposal" in done) {
       assert.equal(done.proposal.executed, true);
       assert.equal(done.task.status, "pending");
+      const again = commit(done.proposal);
+      assert.equal("error" in again, true);
     }
+  });
+
+  it("refuses a changed or expired approval", () => {
+    const { proposal } = think("paper buy 0.1 BTC");
+    const auth = authorize(proposal, "operator", 1_000);
+    assert.equal("proposal" in auth, true);
+    if (!("proposal" in auth)) return;
+    const changed = commit({ ...auth.proposal, pathway: "live_trade" }, 1_000);
+    assert.equal("error" in changed, true);
+    if ("error" in changed) assert.match(changed.error, /changed/);
+    const stale = commit(auth.proposal, 1_000 + 13 * 60 * 60 * 1000);
+    assert.equal("error" in stale, true);
+    if ("error" in stale) assert.match(stale.error, /expired/);
+    const ok = commit(auth.proposal, 1_000);
+    assert.equal("proposal" in ok, true);
   });
 
   it("reality enrichment carries scenario type", () => {
@@ -453,27 +506,34 @@ describe("lab demos", () => {
     assert.ok((effects.plan?.length ?? 0) >= 6);
   });
 
-  it("strips unused functions in applySunder", () => {
+  it("cuts an unused function and says the run was local", () => {
     const files = {
-      "index.html": "<html><h1>x</h1></html>",
+      "index.html": "<html><h1>x</h1><button>Go</button></html>",
       "styles.css": "body{}",
-      "main.js": "function oldAPICall(){\nreturn 1\n}\nconsole.log(1)",
+      "main.js": "function leftover(){\nreturn 1\n}\nconsole.log(1)",
     };
     const findings = scanLab(files);
-    assert.ok(findings.some((f) => f.kind === "dead"));
+    assert.ok(findings.some((f) => f.note.includes("leftover")));
     const next = applySunder(files, findings);
-    assert.equal(/oldAPICall/.test(next["main.js"]), false);
+    assert.equal(/leftover/.test(next["main.js"]), false);
+    assert.match(renderSunder(findings, true), /executed locally/);
+    assert.match(renderScan(findings), /No external Sunder/);
   });
 
-  it("local turn ships Floorcast without a model", async () => {
-    const turn = await tryLocalTurn("Build a YouTube clone in the lab", {
+  it("local turn does not ship Floorcast until COMMIT", async () => {
+    const before = {
       "index.html": "<html></html>",
       "styles.css": "",
       "main.js": "",
-    }, DEFAULT_BIZ);
+    };
+    const turn = await tryLocalTurn("Build a YouTube clone in the lab", before, DEFAULT_BIZ);
     assert.ok(turn);
-    assert.match(turn?.files?.["index.html"] ?? "", /FLOORCAST/);
-    assert.equal(turn?.incomplete, false);
+    assert.equal(turn?.files["index.html"], before["index.html"]);
+    assert.equal(turn?.events.some((e) => e.name === "needs_commit" && e.detail === "lab_build"), true);
+    assert.equal(turn?.events.some((e) => e.name === "write_file"), false);
+    const { run, effects } = await runGoal("Build a YouTube clone in the lab", world({ files: before }));
+    assert.equal(run.ok, true);
+    assert.match(effects.files?.["index.html"] ?? "", /FLOORCAST/);
   });
 
   it("catalog question stays local and does not open a plan", async () => {
@@ -488,7 +548,82 @@ describe("lab demos", () => {
     assert.equal(turn?.events.some((e) => e.name === "inspect_codex"), true);
     assert.equal(turn?.events.some((e) => e.name === "set_plan"), false);
     assert.match(turn?.messages.map((m) => m.content).join("\n") ?? "", /HALLS/);
-    assert.match(turn?.messages[0]?.content ?? "", /capped/i);
+    assert.match(turn?.messages[0]?.content ?? "", /Work/);
+    assert.match(turn?.messages.at(-1)?.content ?? "", /Base64/);
+    assert.match(turn?.messages.at(-1)?.content ?? "", /model/);
+    assert.match(turn?.messages.at(-1)?.content ?? "", /COMMIT/);
+    assert.match(inspectCatalog(), /DESK/);
+  });
+
+  it("desk tools answer exactly and do not touch the lab", async () => {
+    const files = { "index.html": "<html></html>", "styles.css": "", "main.js": "" };
+    const encoded = await matchDesk("base64 encode hello");
+    assert.equal(encoded?.body, "aGVsbG8=");
+    const decoded = await matchDesk("base64 decode aGVsbG8=");
+    assert.equal(decoded?.body, "hello");
+    const hashed = await matchDesk("sha256 hello");
+    assert.equal(hashed?.body, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+    const pretty = await matchDesk('json pretty {"b":1,"a":2}');
+    assert.match(pretty?.body ?? "", /"a": 2/);
+    const math = await matchDesk("calc 12*(3+1)");
+    assert.equal(math?.body, "48");
+    const bad = await matchDesk("base64 decode !!!");
+    assert.match(bad?.body ?? "", /not valid base64/);
+    assert.equal(await matchDesk("what can this office do"), null);
+    const staged = stageDesk("base64 encode ", "hello");
+    assert.equal(staged.ready, true);
+    assert.equal(staged.text, "base64 encode hello");
+    const turn = await tryLocalTurn("base64 encode hello", files, DEFAULT_BIZ);
+    assert.equal(turn?.files["index.html"], files["index.html"]);
+    assert.equal(turn?.messages[0]?.content, "aGVsbG8=");
+    assert.equal(turn?.events[0]?.name, "desk_tool");
+    assert.equal((await matchDesk("reverse hello"))?.body, "olleh");
+    assert.equal((await matchDesk("sort c\na\nb"))?.body, "a\nb\nc");
+    assert.equal((await matchDesk("unique a\na\nb"))?.body, "a\nb");
+    assert.equal((await matchDesk("date 0"))?.body, "1970-01-01T00:00:00.000Z");
+    assert.equal((await matchDesk("html escape <b>"))?.body, "\u0026lt;b\u0026gt;");
+    const jwt = await matchDesk("jwt eyJhbGciOiJub25lIn0.eyJzdWIiOiJkZXNrIn0.e30");
+    assert.match(jwt?.body ?? "", /not checked/);
+    assert.match(jwt?.body ?? "", /desk/);
+    assert.equal(isDeskAsk("Explain this plainly:\nhello"), true);
+    assert.equal(isDeskAsk("base64 encode hello"), false);
+    assert.equal(isDeskImage("Draw this:\na red square"), true);
+    assert.equal(isDeskImage("base64 encode hello"), false);
+    assert.equal(isDeskAsk("Build a YouTube clone in the lab"), false);
+    assert.equal(extractiveSummary("Summarize this: One. Two. Three. Four."), "One. Two. Three.");
+    assert.equal(extractiveSummary("Explain this plainly: One."), null);
+    const cleaned = localDeskAsk("Write this clearly:\nhello   world");
+    assert.match(cleaned?.body ?? "", /Hello world\./);
+    assert.match(cleaned?.body ?? "", /Not a model rewrite/);
+    const explained = localDeskAsk("Explain this plainly:\nfunction add(){ return 1; }");
+    assert.match(explained?.body ?? "", /function add/);
+    assert.match(explained?.body ?? "", /did not answer/i);
+    const english = localDeskAsk("Translate this to English:\nhola");
+    assert.match(english?.body ?? "", /Not translated/);
+    assert.match(english?.body ?? "", /hola/);
+    const coded = localDeskAsk("Write the code. Short and complete:\na counter");
+    assert.match(coded?.files?.["main.js"] ?? "", /add/);
+  });
+
+  it("a carry file moves the office and refuses a token bag", () => {
+    const office = JSON.stringify({ state: { files: { "index.html": "hi" }, messages: [] }, version: 0 });
+    const packed = packCarry(office, "[]");
+    const opened = unpackCarry(packed);
+    assert.equal(JSON.parse(opened?.office ?? "{}").state.files["index.html"], "hi");
+    assert.equal(unpackCarry(JSON.stringify({ office: { state: { github: "ghp_x", files: {} } } })), null);
+    assert.equal(unpackCarry("{"), null);
+    const ledger = renderLedger({
+      events: [{ name: "desk_tool", actor: "operator", detail: "sha256 hello ghp_secretvalue" }],
+      runs: [],
+      policies: [{ title: "Restock cap", signed: true }],
+      halted: false,
+      now: "2026-10-18T00:00:00.000Z",
+    });
+    assert.match(ledger, /You hold COMMIT|operator holds COMMIT/);
+    assert.match(ledger, /Not a regulator filing/);
+    assert.match(ledger, /\[redacted\]/);
+    assert.equal(ledger.includes("ghp_secretvalue"), false);
+    assert.equal(ledgerRows({ events: [], runs: [], policies: [], halted: false }).length, 0);
   });
 
   it("crew desks map to stations", () => {
@@ -587,6 +722,40 @@ describe("lab demos", () => {
   });
 });
 
+describe("shop rail", () => {
+  it("each offer opens Cash App with its price", () => {
+    assert.equal(cashAppHref("$AtomicDreamLabs", "25"), "https://cash.app/$AtomicDreamLabs/25");
+    assert.equal(cashAppHref("$AtomicDreamLabs", "150"), "https://cash.app/$AtomicDreamLabs/150");
+    const html = shopFiles(DEFAULT_BIZ)["index.html"];
+    assert.match(html, /cash\.app\/\$AtomicDreamLabs\/25/);
+    assert.match(html, /cash\.app\/\$AtomicDreamLabs\/150/);
+  });
+
+  it("a paid order can move open to paid to done, and not backward", () => {
+    const scan = offerQuote("offer-2");
+    assert.equal(scan?.price, "25");
+    assert.match(scan?.href ?? "", /\/25$/);
+    assert.equal(offerQuote("nope"), null);
+    assert.equal(nextPaidStatus("open", "paid"), "paid");
+    assert.equal(nextPaidStatus("paid", "done"), "done");
+    assert.equal(nextPaidStatus("done", "open"), null);
+    assert.equal(nextPaidStatus("open", "done"), null);
+    assert.notEqual(sealText("ADL-AAAA", "offer-2", "25", "Ada", "note", "open"), sealText("ADL-AAAA", "offer-2", "25", "Ada", "note", "paid"));
+    assert.equal(deskAllows("secret", "secret", true), true);
+    assert.equal(deskAllows("nope", "secret", true), false);
+    assert.equal(deskAllows("", undefined, true), false);
+    assert.equal(deskAllows("", undefined, false), true);
+    const blocked = allowOrder(
+      Array.from({ length: 4 }, () => ({ key: "ada|offer-2", ts: 1_000 })),
+      ["ada|offer-2", "*"],
+      1_000,
+    );
+    assert.equal(blocked.ok, false);
+    const slip = publicSlip({ id: "ADL-AAAA", name: "Scan", price: "25", status: "open" });
+    assert.deepEqual(Object.keys(slip).sort(), ["id", "name", "price", "status"]);
+  });
+});
+
 describe("bounded autonomy", () => {
   it("unsigned restock 40 cannot auto-COMMIT", () => {
     const policies = hydratePolicies();
@@ -611,6 +780,20 @@ describe("bounded autonomy", () => {
   it("paper trades never auto-COMMIT", () => {
     const policies = hydratePolicies().map((p) => ({ ...p, signed: true, cap: { ...p.cap, tradeQty: 2 } }));
     assert.equal(canAutoCommit("paper buy 0.1 BTC", "paper_trade", policies, true), false);
+  });
+
+  it("AUTO runs the local shift and still refuses money", () => {
+    const cold = hydratePolicies();
+    assert.equal(cold.every((p) => p.signed === false), true);
+    const shift = armLocalShift(cold);
+    assert.equal(canAutoCommit(localRestockGoal("offer-1", 40, shift), "restock", shift, true), true);
+    assert.equal(canAutoCommit("restock 40 units offer-1", "restock", shift, true), false);
+    assert.equal(canAutoCommit("scan market BTC", "market_scan", shift, true), true);
+    assert.equal(canAutoCommit("drain held orders", "drain_holds", shift, true), true);
+    assert.equal(canAutoCommit("scan market BTC", "market_scan", shift, false), false);
+    assert.equal(canAutoCommit("live buy 0.001 BTC", "live_trade", shift, true), false);
+    assert.equal(canAutoCommit("paper buy 0.01 BTC", "paper_trade", shift, true), false);
+    assert.equal(canAutoCommit("ship arcade cabinet", "arcade_ship", shift, true), false);
   });
 
   it("NYX draft is AUTH and still requires COMMIT", () => {

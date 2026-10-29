@@ -2,9 +2,11 @@ import { CampusFrame } from "@/components/office/CampusFrame";
 import { CabinetPlay } from "@/components/office/games/CabinetPlay";
 import { DeskSheet } from "@/components/office/overlays/DeskSheet";
 import { DuelBoard } from "@/components/office/rooms/DuelBoard";
+import { JukeBox } from "@/components/office/rooms/JukeBox";
 import { SteamLounge } from "@/components/office/rooms/SteamLounge";
 import { TubePortal } from "@/components/office/rooms/TubePortal";
 import { hydrateCabinets, heroName, heroSprite, type Cabinet } from "@/lib/nexus/arcade";
+import { requestDeck } from "@/lib/nexus/campus";
 import { CREW_CLASS } from "@/lib/nexus/crew";
 import { useNexus } from "@/lib/nexus/store";
 import { cn } from "@/lib/utils";
@@ -15,11 +17,12 @@ const PANES = [
   { id: "tube", chip: "TUBE" },
   { id: "steam", chip: "STEAM" },
   { id: "duel", chip: "CHESS" },
+  { id: "tune", chip: "JUKE" },
 ] as const;
 
 type PlayPane = (typeof PANES)[number]["id"];
 
-export function ArcadeFloor({ embedded }: { embedded?: boolean }) {
+export function ArcadeFloor({ embedded, focus = "all" }: { embedded?: boolean; focus?: "all" | "play" | "club" }) {
   const biz = useNexus((s) => s.biz);
   const cabinets = hydrateCabinets(biz.cabinets);
   const playingId = useNexus((s) => s.playingId);
@@ -34,7 +37,17 @@ export function ArcadeFloor({ embedded }: { embedded?: boolean }) {
   const forging = busy || working.includes("engineer");
   const playing = cabinets.find((c) => c.id === playingId) ?? null;
   const newest = cabinets[cabinets.length - 1]?.id;
-  const pane: PlayPane = zone === "tube" || zone === "steam" || zone === "duel" ? zone : "cabs";
+  const pane: PlayPane =
+    focus === "play"
+      ? "cabs"
+      : focus === "club"
+        ? zone === "steam" || zone === "duel" || zone === "tune"
+          ? zone
+          : "tube"
+        : zone === "tube" || zone === "steam" || zone === "duel" || zone === "tune"
+          ? zone
+          : "cabs";
+  const panes = PANES.filter((p) => (focus === "play" ? p.id === "cabs" : focus === "club" ? p.id !== "cabs" : true));
 
   useEffect(() => {
     if (!playing) return;
@@ -48,17 +61,28 @@ export function ArcadeFloor({ embedded }: { embedded?: boolean }) {
   const body = (
     <>
       <nav className="club-zones" aria-label="Entertainment">
-        {PANES.map((p) => (
+        {panes.map((p) => (
           <button
             key={p.id}
             type="button"
             id={p.id === "cabs" ? "btn-club-cabs" : `btn-club-${p.id}`}
             className={cn("room-chip", pane === p.id && "on")}
-            onClick={() => setClubZone(p.id === "cabs" ? "tapes" : p.id)}
+            onClick={() => {
+              if (p.id === "cabs") requestDeck("arcade");
+              else {
+                setClubZone(p.id);
+                requestDeck("lounge");
+              }
+            }}
           >
             {p.chip}
           </button>
         ))}
+        {focus === "club" ? (
+          <button type="button" className="room-chip" onClick={() => requestDeck("arcade")}>
+            ARCADE
+          </button>
+        ) : null}
         <button type="button" id="btn-ship-cab" className="arcade-ship" disabled={busy} onClick={() => void stageCrew("rix", "ship arcade cabinet")}>
           SHIP
         </button>
@@ -76,7 +100,7 @@ export function ArcadeFloor({ embedded }: { embedded?: boolean }) {
                 ? "RIX is on the cabinet."
                 : lastRun?.pathway === "arcade_ship"
                   ? lastRun.detail
-                  : "Cabinets are ours. YouTube and Steam are logins. SHIP needs AUTH."}
+                  : "Local cabinets. YouTube and Steam are the next chips. SHIP needs AUTH."}
             </p>
           </div>
           <ul className="arcade-row">
@@ -91,6 +115,7 @@ export function ArcadeFloor({ embedded }: { embedded?: boolean }) {
       {pane === "tube" ? <TubePortal /> : null}
       {pane === "steam" ? <SteamLounge /> : null}
       {pane === "duel" ? <DuelBoard /> : null}
+      {pane === "tune" ? <JukeBox /> : null}
       {playing ? (
         <DeskSheet title={playing.title} kicker={`${heroName(playing.hero)} · ${playing.engine.toUpperCase()}`} onClose={close} wide>
           <CabinetPlay cab={playing} />

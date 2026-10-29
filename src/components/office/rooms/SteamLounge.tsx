@@ -1,71 +1,89 @@
-import { hydrateCabinets, heroName, heroSprite } from "@/lib/nexus/arcade";
-import { CREW_CLASS } from "@/lib/nexus/crew";
+import { useEffect, useState } from "react";
 import { STEAM_LINKS } from "@/lib/nexus/club";
+import { loadSteamLibrary, type SteamGame } from "@/lib/nexus/steam";
 import { useNexus } from "@/lib/nexus/store";
-import { cn } from "@/lib/utils";
-import { useEffect, useMemo } from "react";
+
+const NAME_KEY = "nexus-steam-name";
 
 export function SteamLounge() {
-  const raw = useNexus((s) => s.biz.cabinets);
-  const cabinets = useMemo(() => hydrateCabinets(raw), [raw]);
-  const play = useNexus((s) => s.playCabinet);
   const grantFeat = useNexus((s) => s.grantFeat);
-  const scores = useNexus((s) => s.club.scores);
+  const [name, setName] = useState("");
+  const [games, setGames] = useState<SteamGame[]>([]);
+  const [status, setStatus] = useState("NOT CONNECTED");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     grantFeat("steam");
+    const saved = localStorage.getItem(NAME_KEY);
+    if (saved) setName(saved);
   }, [grantFeat]);
+
+  async function load(e?: { preventDefault: () => void }) {
+    e?.preventDefault();
+    const vanity = name.trim();
+    if (!vanity) {
+      setErr("Type the public Steam name, not a password.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    const result = await loadSteamLibrary({ data: { vanity } });
+    setBusy(false);
+    if (!result.ok) {
+      setGames([]);
+      setStatus("NOT CONNECTED");
+      setErr(result.error);
+      return;
+    }
+    localStorage.setItem(NAME_KEY, result.name);
+    setGames(result.games);
+    setStatus("LIVE");
+  }
 
   return (
     <div className="theater-stage">
-      <div className="theater-screen">
-        <p className="font-body text-xl text-cream">Steam lounge</p>
-        <p className="theater-note">
-          Authorized handoff. Nexus does not copy, stream, or crack Steam games. The cabinets below are ours.
-        </p>
-        <div className="flex flex-wrap justify-center gap-2">
-          {STEAM_LINKS.map((l) => (
-            <a key={l.href} className="rail-link" href={l.href} target="_blank" rel="noopener noreferrer">
-              {l.title.toUpperCase()}
-            </a>
-          ))}
+      <p className="campus-kicker">
+        {status === "LIVE" ? "LIVE public Steam library. Launch opens Steam on this device." : "NOT CONNECTED. Type a public Steam name. This is not a local game list."}
+      </p>
+      <form className="lib-search px-1" onSubmit={(e) => void load(e)}>
+        <label className="font-pixel text-[11px] text-gold" htmlFor="steam-name">
+          PUBLIC STEAM NAME
+        </label>
+        <div className="dock-compose px-0">
+          <input
+            id="steam-name"
+            className="dock-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Public name"
+            autoComplete="off"
+          />
+          <button type="submit" className="dock-send" disabled={busy}>
+            {busy ? "…" : "LOAD"}
+          </button>
         </div>
-      </div>
-      <p className="font-pixel text-[8px] text-gold">NEXUS LIBRARY</p>
-      <ul className="tape-row">
-        {cabinets.map((c) => (
-          <li key={c.id}>
-            <button
-              type="button"
-              className="tape-card"
-              onClick={() => play(c.id)}
-              aria-label={`Play ${c.title}`}
-            >
-              <img src={heroSprite(c.hero)} alt="" className={cn("station-sprite", CREW_CLASS[c.hero])} draggable={false} />
-              <span className="cab-marquee">{c.title}</span>
-              <span className="cab-bezel">
-                {heroName(c.hero)} · HI {c.hi || 0}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      {scores.length ? (
-        <>
-          <p className="font-pixel text-[8px] text-gold">BOARD</p>
-          <ul className="club-board">
-            {scores.slice(0, 6).map((s, i) => (
-              <li key={`${s.game}-${s.ts}-${i}`}>
-                <span className="font-pixel text-[8px] text-muted">{i + 1}</span>
-                <span className="font-body text-lg text-cream">
-                  {s.title} · {heroName(s.hero)}
-                </span>
-                <span className="font-pixel text-[8px] text-gold tabular-nums">{s.score}</span>
-              </li>
-            ))}
-          </ul>
-        </>
+        {err ? <p className="font-body text-lg text-danger">{err}</p> : null}
+      </form>
+      {games.length ? (
+        <ul className="tape-row">
+          {games.map((g) => (
+            <li key={g.appId}>
+              <a className="tape-card" href={`steam://run/${g.appId}`}>
+                <span className="cab-marquee">{g.name}</span>
+                <span className="cab-bezel">LAUNCH</span>
+              </a>
+            </li>
+          ))}
+        </ul>
       ) : null}
+      <div className="flex flex-wrap justify-center gap-2">
+        {STEAM_LINKS.map((l) => (
+          <a key={l.href} className="rail-link" href={l.href} target="_blank" rel="noopener noreferrer">
+            {l.title.toUpperCase()}
+          </a>
+        ))}
+      </div>
     </div>
   );
 }

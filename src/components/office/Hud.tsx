@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { ROOM_ORDER, ROOMS } from "@/lib/nexus/campus";
+import { beep, isMuted, setMuted } from "@/components/office/games/beep";
+import { facilityPaused, setFacilityPaused } from "@/lib/nexus/lift";
 import { useNexus } from "@/lib/nexus/store";
 import { plantStats } from "@/lib/nexus/watches";
 import { cn } from "@/lib/utils";
@@ -17,13 +18,13 @@ export function Hud() {
   const lastRun = useNexus((s) => s.lastRun);
   const overlay = useNexus((s) => s.overlay);
   const briefed = useNexus((s) => s.briefed);
-  const room = useNexus((s) => s.room);
   const playingId = useNexus((s) => s.playingId);
-  const setRoom = useNexus((s) => s.setRoom);
   const queue = useNexus((s) => s.queue);
   const setDockTab = useNexus((s) => s.setDockTab);
   const pickPacket = useNexus((s) => s.pickPacket);
   const [time, setTime] = useState("");
+  const [held, setHeld] = useState(facilityPaused());
+  const [quietSound, setQuietSound] = useState(isMuted());
   const stats = plantStats(biz);
   const pulse = stats.halted || stats.holds > 0 || stats.low;
   const quiet = !!overlay || !briefed || !!playingId;
@@ -41,6 +42,29 @@ export function Hud() {
       <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
         <div className="flex flex-wrap items-end gap-x-5 gap-y-1">
           <p className="font-pixel text-[10px] text-cream md:text-[12px]">NEXUS</p>
+          <button
+            type="button"
+            className="font-pixel text-[10px] text-gold md:text-[12px]"
+            onClick={() => {
+              const next = !held;
+              setHeld(next);
+              setFacilityPaused(next);
+            }}
+          >
+            {held ? "RESUME" : "PAUSE"}
+          </button>
+          <button
+            type="button"
+            className="font-pixel text-[10px] text-gold md:text-[12px]"
+            onClick={() => {
+              const next = !quietSound;
+              setQuietSound(next);
+              setMuted(next);
+              if (!next) beep(520, 0.06);
+            }}
+          >
+            {quietSound ? "SOUND" : "MUTE"}
+          </button>
           <p className="font-pixel text-[10px] text-muted md:text-[12px]">
             GOLD <span className="tabular-nums text-cream">{gold}</span>
             {crewGold ? (
@@ -88,20 +112,6 @@ export function Hud() {
           ) : null}
         </div>
       </div>
-      <nav className="room-rail" aria-label="Rooms">
-        {ROOM_ORDER.map((id) => (
-          <button
-            key={id}
-            type="button"
-            id={`btn-room-${id}`}
-            onClick={() => setRoom(id)}
-            className={cn("room-chip", room === id && "on")}
-            aria-label={ROOMS[id].label}
-          >
-            {ROOMS[id].chip}
-          </button>
-        ))}
-      </nav>
       {lastRun ? (
         <p className="hud-cycle mt-1 font-pixel text-[7px] text-muted md:text-[9px]">
           {lastRun.title.toUpperCase()} <span className="tabular-nums text-cream">{lastRun.hash.slice(0, 8)}</span>

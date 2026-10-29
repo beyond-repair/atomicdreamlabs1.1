@@ -7,6 +7,8 @@ import { hydrateSesa, triage } from "@/lib/nexus/sesa";
 import { plantStats } from "@/lib/nexus/watches";
 import { cn } from "@/lib/utils";
 import { useEffect } from "react";
+import { ledgerRows, renderLedger } from "@/lib/nexus/ledger";
+import { sha256Hex } from "@/lib/nexus/hash";
 
 export function ProofFloor() {
   const lastRun = useNexus((s) => s.lastRun);
@@ -42,6 +44,27 @@ export function ProofFloor() {
   const setRoom = useNexus((s) => s.setRoom);
   const sesa = hydrateSesa(biz.sesa);
   const health = triage(sesa);
+  const setFileContent = useNexus((s) => s.setFileContent);
+  const rows = ledgerRows({
+    events,
+    runs,
+    policies,
+    halted: !!halted,
+  });
+
+  async function exportLedger() {
+    const body = renderLedger({ events, runs, policies, halted: !!halted });
+    const hash = await sha256Hex(body);
+    const file = `${body}\nsha256: ${hash}\n`;
+    setFileContent("AUDIT.md", file);
+    const blob = new Blob([file], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "adl-nexus-ledger.md";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
 
   useEffect(() => {
     grantFeat("proof");
@@ -144,10 +167,25 @@ export function ProofFloor() {
               Crew may THINK → AUTH. COMMIT needs you or a signed cap. Cabinets never auto.
             </p>
             <div className="proof-actions">
-              <button type="button" id="btn-proof-audit" className="arcade-back" onClick={() => think("generate audit pack")}>
-                AUDIT
+              <button type="button" id="btn-proof-audit" className="arcade-back" onClick={() => void exportLedger()}>
+                EXPORT
+              </button>
+              <button type="button" className="arcade-back" onClick={() => think("generate audit pack")}>
+                STAGE
               </button>
             </div>
+            {rows.length ? (
+              <ul className="ledger-list">
+                {rows.map((row) => (
+                  <li key={`${row.what}-${row.detail}`}>
+                    <span>{row.what}</span>
+                    {row.detail}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 font-body text-lg text-muted">No record yet. The counter writes one as you work.</p>
+            )}
           </section>
           <section className={cn("proof-card", sesa.lock && "bad")}>
             <h3 className="path-kind">SESA LEDGER</h3>

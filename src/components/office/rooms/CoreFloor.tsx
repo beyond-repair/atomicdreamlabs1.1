@@ -82,8 +82,10 @@ export function CoreFloor() {
           }
         />
         <p className="campus-kicker">
-          VSA is bipolar D={HYPER_DIM}. SMT is cohesion ≥ {COHESION_THRESHOLD}. Ring is in-process. Merkle is local.
-          Dual-reality is paper. Not Godot. Not a chain.
+          Type a symbol and press ENCODE. Pick an intent, then an action. A green step passed. SNAP undoes the last frame. COMMIT is still yours.
+        </p>
+        <p className="font-body text-base leading-5 text-muted">
+          The vectors are bipolar and {HYPER_DIM.toLocaleString()} long. A bind is kept only if cohesion is at least {COHESION_THRESHOLD}. The ring and the hash stay in this browser.
         </p>
         <div className="pipe-row" id="sesa-lifecycle" aria-label="SESA lifecycle">
           {LIFECYCLE.map((step) => (

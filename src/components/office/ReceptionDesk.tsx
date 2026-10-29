@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 
+import { matchRoom, requestDeck } from "@/lib/nexus/campus";
+import { matchClub } from "@/lib/nexus/club";
 import { useNexus } from "@/lib/nexus/store";
 import { PIPE, PATHWAYS, PATHWAY_GROUPS } from "@/lib/nexus/pathways";
 import { WATCH_DEFS } from "@/lib/nexus/watches";
 import { ROLES } from "@/lib/nexus/types";
 import { STAGER_NAME, stagerClass } from "@/lib/nexus/stage";
 import { GateCrew, PacketInspect } from "@/components/office/GovernGate";
+import { JOBS } from "@/lib/nexus/product";
+import { DESK_CHIPS, stageDesk } from "@/lib/nexus/desk";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -14,13 +18,19 @@ const TABS = [
   { id: "govern", label: "GOVERN" },
 ] as const;
 
+const ASK = [
+  { id: "write", label: "Write", verb: "Write this clearly:\n" },
+  { id: "sum", label: "Sum", verb: "Summarize this:\n" },
+  { id: "explain", label: "Explain", verb: "Explain this plainly:\n" },
+  { id: "translate", label: "Translate", verb: "Translate this to English:\n" },
+  { id: "code", label: "Code", verb: "Write the code. Short and complete:\n" },
+  { id: "draw", label: "Draw", verb: "Draw this:\n" },
+  { id: "clip", label: "Clip", verb: "Clip this:\n" },
+];
+
 const STARTERS = [
+  ...JOBS.map((job) => ({ label: job.title, deck: job.deck, tab: job.tab })),
   { label: "What can you do?", send: "What can this office actually do right now?" },
-  { label: "Trade", send: "paper buy 0.01 BTC" },
-  { label: "Restock", send: "restock 40 units" },
-  { label: "Arcade", room: "arcade" as const },
-  { label: "YouTube", send: "open YouTube" },
-  { label: "Steam", send: "open Steam" },
 ];
 
 export function ReceptionDesk() {
@@ -36,7 +46,6 @@ export function ReceptionDesk() {
   const proposal = useNexus((s) => s.activeProposal);
   const err = useNexus((s) => s.lastError);
   const overlay = useNexus((s) => s.overlay);
-  const openOverlay = useNexus((s) => s.openOverlay);
   const closeOverlay = useNexus((s) => s.closeOverlay);
   const setLabPane = useNexus((s) => s.setLabPane);
   const labPane = useNexus((s) => s.labPane);
@@ -54,8 +63,7 @@ export function ReceptionDesk() {
   const inbound = useNexus((s) => s.inbound);
   const speech = useNexus((s) => s.speech);
   const briefed = useNexus((s) => s.briefed);
-  const setRoom = useNexus((s) => s.setRoom);
-  const room = useNexus((s) => s.room);
+  const clearTalk = useNexus((s) => s.clearTalk);
   const holds = useNexus((s) => (s.biz.orders ?? []).filter((o) => o.status === "held").length);
   const queue = useNexus((s) => s.queue);
   const policies = useNexus((s) => s.policies);
@@ -69,13 +77,20 @@ export function ReceptionDesk() {
   const dropPacket = useNexus((s) => s.dropPacket);
   const toggleAuto = useNexus((s) => s.toggleAuto);
   const [paths, setPaths] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const bottom = useRef<HTMLDivElement>(null);
   const thread = messages.filter((m) => m.id !== "hello").slice(-10);
 
   const canAuth = !!proposal && !proposal.authorized;
   const canCommit = !!proposal && proposal.authorized && !proposal.executed;
   const asked = thread.length > 0;
+  const reply = [...thread].reverse().find((m) => m.role !== "user");
+  const pending = busy && thread.at(-1)?.role === "user";
+  const log = thread.slice(-6);
+  const logEnd = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    logEnd.current?.scrollIntoView({ block: "end" });
+  }, [log.length, pending, reply?.content]);
   const plantOpen = overlay === "sim";
   const waiting = queue.filter((p) => !p.proposal.executed);
   const picked = waiting.find((p) => p.proposal.id === proposal?.id) ?? waiting[0] ?? null;
@@ -94,15 +109,17 @@ export function ReceptionDesk() {
             : "Cycle complete."
           : "Authorized. COMMIT executes and hashes.";
 
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, busy, tab]);
-
   function goTab(id: (typeof TABS)[number]["id"]) {
     setDockTab(id);
-    if (id === "chat") closeOverlay();
+    if (id === "chat") {
+      closeOverlay();
+      requestDeck("lobby");
+    }
     if (id === "govern" && overlay !== "sim") closeOverlay();
-    if (id === "lab" && overlay !== "ide" && overlay !== "files") closeOverlay();
+    if (id === "lab") {
+      if (overlay !== "ide" && overlay !== "files") closeOverlay();
+      requestDeck("lab");
+    }
   }
 
   return (
@@ -133,26 +150,13 @@ export function ReceptionDesk() {
           </button>
         ))}
       </nav>
+      <p className="desk-posture">
+        {halted ? "Desk halted" : "Work · Sell · Build"} · <strong>You hold COMMIT</strong>
+      </p>
 
       {tab === "chat" ? (
         <>
-          {asked ? (
-            <div className="dock-thread" aria-live="polite">
-              {thread.map((m) => {
-                const mine = m.role === "user";
-                const who = mine ? "YOU" : m.name ? (ROLES[m.name]?.label ?? m.name) : "OPS";
-                return (
-                  <div key={m.id} className={mine ? "ml-8" : "mr-6"}>
-                    <p className="font-pixel text-[7px] text-gold">{who}</p>
-                    <p className="mt-0.5 bg-speech px-2 py-1 font-body text-base leading-5 text-ink">{m.content}</p>
-                  </div>
-                );
-              })}
-              {busy ? <p className="font-pixel text-[7px] text-muted">On it…</p> : null}
-              <div ref={bottom} />
-            </div>
-          ) : null}
-          {!asked && !busy && briefed ? (
+          {!briefed || asked ? null : (
             <div className="dock-starters" aria-label="Start here">
               {STARTERS.map((s) => (
                 <button
@@ -160,12 +164,14 @@ export function ReceptionDesk() {
                   type="button"
                   className="dock-starter"
                   onClick={() => {
-                    if ("send" in s && s.send) {
-                      void send(s.send);
+                    if ("deck" in s && s.deck) {
+                      setDockTab(s.tab);
+                      requestDeck(s.deck);
                       return;
                     }
-                    if ("room" in s && s.room) {
-                      setRoom(s.room);
+                    if ("send" in s && s.send) {
+                      if (tab === "chat" && !matchClub(s.send) && !matchRoom(s.send)) requestDeck("lobby");
+                      void send(s.send);
                     }
                   }}
                 >
@@ -173,40 +179,81 @@ export function ReceptionDesk() {
                 </button>
               ))}
             </div>
-          ) : null}
+          )}
+          {asked ? (
+            <div className="dock-peek">
+              <div className="dock-peek-bar">
+                <span>{pending ? "WORKING" : "COUNTER"}</span>
+                {reply && !pending ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const text = reply.content;
+                        void navigator.clipboard.writeText(text).then(
+                          () => {
+                            setCopied(true);
+                            window.setTimeout(() => setCopied(false), 1200);
+                          },
+                          () => setGoalDraft(text),
+                        );
+                      }}
+                    >
+                      {copied ? "Copied" : "Copy"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGoalDraft(reply.content);
+                        document.getElementById("nexus-goal")?.focus();
+                      }}
+                    >
+                      Use
+                    </button>
+                    <button type="button" onClick={() => clearTalk()}>
+                      Clear
+                    </button>
+                  </>
+                ) : null}
+              </div>
+              <div className="dock-answer" role="log">
+                {log.map((m) => (
+                  <p key={m.id} className={m.role === "user" ? "mine" : ""}>
+                    <span>{m.role === "user" ? "YOU" : "COUNTER"}</span>
+                    {m.content}
+                    {m.image ? <img className="dock-picture" src={m.image} alt="" /> : null}
+                    {m.video && /^https:\/\//.test(m.video) ? (
+                      <video className="dock-picture" src={m.video} controls playsInline />
+                    ) : null}
+                  </p>
+                ))}
+                {pending ? <p className="waiting">Working.</p> : null}
+                <div ref={logEnd} />
+              </div>
+            </div>
+          ) : (
+            <p className="dock-peek">
+              <span className="font-body text-base text-cream">
+                Type here. Base64, hash, JSON, JWT, and math answer on their own. Write, Explain, Translate, Code, Draw, and Clip call the model.
+              </span>
+            </p>
+          )}
         </>
       ) : null}
 
       {tab === "lab" ? (
         <div className="dock-actions">
-          <Action on={overlay === null && room === "office"} onClick={() => { closeOverlay(); setRoom("office"); }} label="LOBBY" />
           <Action on={labPane === "edit"} onClick={() => setLabPane("edit")} label="IDE" />
           <Action on={labPane === "test"} onClick={() => runLabTests()} label="TEST" />
           <Action on={labPane === "run"} onClick={() => setLabPane("run")} label="RUN" />
-          <Action on={room === "arcade"} onClick={() => setRoom("arcade")} label="PLAY" />
-          <Action on={room === "exchange"} onClick={() => setRoom("exchange")} label="DESK" />
-          <Action
-            on={false}
-            onClick={() => {
-              setDockTab("chat");
-              void send("Build a video grid demo in the lab IDE with search, a player, a sidebar, and comments.");
-            }}
-            label="REEL"
-          />
         </div>
-      ) : null}
-
-      {tab === "lab" ? (
-        <p className="dock-whisper">
-          <span className="font-body text-base text-muted">Edit, TEST, RUN at the counter. PLAY is entertainment. DESK is business.</span>
-        </p>
       ) : null}
 
       {tab === "govern" ? (
         <div className="govern-pane">
           {halted ? <p className="halt-banner">DESK HALTED · resume before trade / stock / orders</p> : null}
           {!halted && holds ? <p className="hold-banner">HOLD {holds} · restock then DRAIN, or arm HOLD</p> : null}
-          <p className="dock-whisper govern-next">{gateLine}</p>
+          <p className="dock-whisper govern-next">{gateLine} Red marks a live step. You still hold COMMIT.</p>
           {!plantOpen && waiting.length ? <GateCrew queue={waiting} onPick={pickPacket} /> : null}
           {!plantOpen && waiting.length ? (
             <ul className="stage-list" aria-label="Staged packets">
@@ -263,7 +310,7 @@ export function ReceptionDesk() {
             </ol>
           ) : null}
           <div className="dock-actions">
-            <Action id="btn-think" on={!!proposal && !proposal.authorized} onClick={() => think()} label="THINK" />
+            <Action id="btn-think" on={!!proposal && !proposal.authorized} onClick={() => think()} label="THINK" title={draft.trim() ? "Stage this order" : "Type an order in the box first"} />
             <Action id="btn-authorize" on={canAuth} onClick={authorize} label="AUTH" disabled={!canAuth} />
             <Action
               id="btn-commit"
@@ -283,15 +330,13 @@ export function ReceptionDesk() {
                   label={autoOps ? "AUTO ON" : "AUTO"}
                 />
                 <Action id="btn-inbound" on={false} onClick={() => void inbound()} label="ORDER" />
-                <Action on={false} onClick={() => openOverlay("sim")} label="PLANT" />
-                <Action on={tab === "govern"} onClick={() => setDockTab("govern")} label="GATE" />
                 <Action on={paths} onClick={() => setPaths((v) => !v)} label="PATHS" />
               </>
             ) : null}
           </div>
           {!plantOpen ? (
             <>
-              <p className="path-kind">STAGE · NYX GOLD · RIX TEAL · HAL GREEN</p>
+              <p className="path-kind">CREW STAGES. YOU COMMIT.</p>
               <div className="dock-actions govern-chips">
                 <Action
                   id="btn-stage-nyx"
@@ -388,10 +433,57 @@ export function ReceptionDesk() {
         </div>
       ) : null}
 
+      {tab === "chat" ? (
+        <div className="dock-tools" aria-label="Desk tools">
+          {DESK_CHIPS.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              className="dock-tool"
+              disabled={busy}
+              onClick={() => {
+                const next = stageDesk(chip.verb, draft);
+                if (!next.ready) {
+                  setGoalDraft(next.text);
+                  document.getElementById("nexus-goal")?.focus();
+                  return;
+                }
+                setGoalDraft("");
+                if (!matchClub(next.text) && !matchRoom(next.text)) requestDeck("lobby");
+                void send(next.text);
+              }}
+            >
+              {chip.label}
+            </button>
+          ))}
+          {ASK.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              className="dock-tool ask"
+              disabled={busy}
+              onClick={() => {
+                const next = stageDesk(chip.verb, draft);
+                if (!next.ready) {
+                  setGoalDraft(next.text);
+                  document.getElementById("nexus-goal")?.focus();
+                  return;
+                }
+                setGoalDraft("");
+                void send(next.text);
+              }}
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <form
         className="dock-compose"
         onSubmit={(e) => {
           e.preventDefault();
+          if (tab === "chat" && draft.trim() && !matchClub(draft) && !matchRoom(draft)) requestDeck("lobby");
           void send();
         }}
       >
@@ -402,7 +494,7 @@ export function ReceptionDesk() {
           id="nexus-goal"
           value={draft}
           onChange={(e) => setGoalDraft(e.target.value)}
-          placeholder={busy ? "On it…" : tab === "govern" ? "State an order, then THINK…" : "Ask reception…"}
+          placeholder={busy ? "Working…" : tab === "govern" ? "Type the order, then THINK" : "Type at the counter"}
           disabled={busy}
           autoComplete="off"
           enterKeyHint="send"
@@ -413,7 +505,7 @@ export function ReceptionDesk() {
           <button
             type="button"
             id="btn-think-send"
-            disabled={busy || (!draft.trim() && !proposal)}
+            disabled={busy}
             className="dock-send"
             onClick={() => think()}
           >

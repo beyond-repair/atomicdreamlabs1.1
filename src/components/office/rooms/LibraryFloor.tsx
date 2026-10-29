@@ -59,7 +59,7 @@ export function LibraryFloor() {
             void send(`Look this up on the internet: ${text}`);
           }}
         >
-          <label className="font-pixel text-[8px] text-gold" htmlFor="lib-hall-q">
+          <label className="font-pixel text-[11px] text-gold" htmlFor="lib-hall-q">
             SEARCH THE NET
           </label>
           <input

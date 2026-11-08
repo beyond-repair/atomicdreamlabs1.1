@@ -1,5 +1,9 @@
 # ADL NEXUS
 
+**Lifecycle:** RESEARCH (experimental web office)
+**Claim:** software / claim-capped — see CLAIM_STATUS.md
+**Not claimed:** production kernel, live trading without operator, validated AGI or digital twin.
+
 One desk. Three jobs.
 
 | Job | Where | What it does |
@@ -13,3 +17,7 @@ You hold COMMIT before a live trade, a hosted page, or anything that spends mone
 This repository is the office. It is not the Python ADL-Nexus kernel.
 
 Orders and the desk key are kept in `.data` on the machine that runs the app. A hosted database is used only when `DATABASE_URL` is set.
+
+---
+
+Governance: beyond-repair/ADL-Governance · CLAIM_STATUS.md

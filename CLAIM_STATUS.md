@@ -11,7 +11,7 @@ Experimental TypeScript / TanStack Start web application serving as the "office"
 - Work / Sell / Build jobs described in README.
 - Optional auth (better-auth) and database (PGlite / Postgres) gated by env.
 - Extensive `.grok/skills` and references for app/game scaffolding (design-ui, building-games, auth, etc.).
-- Tests defined in package.json (node:test on select lib files); no GitHub Actions CI workflows present.
+- Tests defined in package.json (node:test on select lib files); GitHub Actions CI workflow added (typecheck + test).
 - No releases, no production deployment claims.
 
 ## What this repository is not
@@ -25,4 +25,4 @@ Experimental TypeScript / TanStack Start web application serving as the "office"
 
 Aligned to ADL-Governance. All claims capped. Preserve history. Idempotent documentation only.
 
-Updated: Sweep-699 (2026-11-08).
+Updated: Sweep cycle 2026-11-12 (CI workflow added).
